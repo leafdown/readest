@@ -111,6 +111,20 @@ describe('reconcileCalibreBooks', () => {
     expect(upserts[0]!.metadata?.calibreSource?.format).toBe('mobi');
   });
 
+  it('keeps a user-edited stub title across re-syncs', () => {
+    const edited = stub('1');
+    edited.title = 'My Rename';
+    edited.metadataUpdatedAt = NOW + 5;
+    const { upserts } = reconcile(
+      [serverBook('1', { title: 'Server Rename', last_modified: '2026-02-01T00:00:00+00:00' })],
+      [edited],
+    );
+    // The only change worth writing is the refreshed sync stamp.
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0]!.title).toBe('My Rename');
+    expect(upserts[0]!.metadata?.calibreSource?.lastModified).toBe('2026-02-01T00:00:00+00:00');
+  });
+
   it('tombstones stubs that vanished from the server', () => {
     const removed = stub('1');
     const kept = stub('2');

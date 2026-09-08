@@ -1,5 +1,5 @@
 import type { BookMetadata, CalibreSourceInfo } from '@/libs/document';
-import type { CalibreBookJson, CalibreServer } from '@/types/calibre';
+import type { CalibreBookJson } from '@/types/calibre';
 import type { Book } from '@/types/book';
 import { md5 } from '@/utils/md5';
 import { formatAuthors, formatTitle, getPrimaryLanguage } from '@/utils/book';
@@ -105,6 +105,26 @@ export const isCalibreBook = (book: { filePath?: string; metadata?: Book['metada
 export const isCalibreStub = (book: Book): boolean => !!parseCalibreFilePath(book.filePath);
 
 /**
+ * The server identity of a Calibre book, from whichever anchor is present:
+ * the synthetic `calibre://` filePath on undownloaded stubs, or the
+ * `metadata.calibreSource` stamp that survives the download (the filePath is
+ * cleared once the real file lands, so the row then behaves like a normal
+ * local book for sync/open, while calibreSource keeps re-download and
+ * progress sync working).
+ */
+export const resolveCalibreIdentity = (
+  book: Pick<Book, 'filePath' | 'metadata'>,
+): { serverId: string; libraryId: string; bookId: string } | null => {
+  const parsed = parseCalibreFilePath(book.filePath);
+  if (parsed) return parsed;
+  const source = book.metadata?.calibreSource;
+  if (source?.serverId && source.libraryId && source.bookId) {
+    return { serverId: source.serverId, libraryId: source.libraryId, bookId: source.bookId };
+  }
+  return null;
+};
+
+/**
  * Build the `metadata` payload a Calibre book syncs with. Mirrors
  * buildAbsBookMetadata (src/utils/audiobook.ts): identity fields with no
  * cloud `books` column ride inside `metadata`, which does sync.
@@ -148,16 +168,4 @@ export const hydrateCalibreBookFields = (
   book.title = formatTitle(metadata.title);
   book.author = formatAuthors(metadata.author, book.primaryLanguage);
   book.primaryLanguage = getPrimaryLanguage(metadata.language);
-};
-
-/** The Calibre server row a book belongs to, or undefined if it isn't one. */
-export const resolveCalibreServer = (
-  book: Pick<Book, 'filePath' | 'metadata'>,
-  findServer: (id: string) => CalibreServer | undefined,
-): CalibreServer | undefined => {
-  const parsed = parseCalibreFilePath(book.filePath);
-  if (parsed) return findServer(parsed.serverId);
-  const source = book.metadata?.calibreSource;
-  if (source) return findServer(source.serverId);
-  return undefined;
 };

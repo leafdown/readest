@@ -12,7 +12,7 @@ import {
   isReadestCloudEnabled,
 } from '@/services/sync/cloudSyncProvider';
 import { runFileBookDownload, runFileBookUpload } from '@/services/sync/file/runLibrarySync';
-import { isCalibreStub } from '@/utils/calibre';
+import { isCalibreBook } from '@/utils/calibre';
 import { downloadCalibreBook } from '@/services/calibre/download';
 import { getLocalBookFilename } from '@/utils/book';
 
@@ -137,11 +137,13 @@ export const useBookTransferActions = (
   const handleBookDownload = useCallback(
     async (book: Book, downloadOptions: BookDownloadOptions = {}) => {
       const { redownload = false, queued = false, silent = false } = downloadOptions;
-      // A Calibre sync stub downloads from its own server into the managed
-      // shelf dir (keeping the row's hash), not from any cloud mirror. Its
+      // A Calibre book downloads from its own server into the managed shelf
+      // dir (keeping the row's hash), not from any cloud mirror. Covers both
+      // undownloaded stubs and downloaded copies whose local file was
+      // deleted — identity rides metadata.calibreSource either way. The
       // on-disk file doubles as the "already downloaded" check, so a
       // redownload request must evict it first.
-      if (isCalibreStub(book)) {
+      if (isCalibreBook(book)) {
         if (!appService) return false;
         if (redownload) {
           await appService.deleteFile(getLocalBookFilename(book), 'Books').catch(() => {});

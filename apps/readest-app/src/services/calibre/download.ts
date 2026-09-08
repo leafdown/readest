@@ -5,7 +5,7 @@ import { createCalibreClient } from '@/services/calibre/client';
 import { READEST_OPDS_USER_AGENT } from '@/services/constants';
 import { downloadFile } from '@/libs/storage';
 import { needsProxy, probeAuth } from '@/app/opds/utils/opdsReq';
-import { parseCalibreFilePath } from '@/utils/calibre';
+import { resolveCalibreIdentity } from '@/utils/calibre';
 import { getLocalBookFilename } from '@/utils/book';
 import { uniqueId } from '@/utils/misc';
 import { findCalibreServerById } from '@/store/calibreServerStore';
@@ -23,6 +23,13 @@ interface DownloadCalibreBookOptions {
  * keys all stay stable, and `resolveBookContentSource` finds a managed file
  * on the next open without any re-import or stub-replacement dance.
  *
+ * On success the synthetic `calibre://` filePath is cleared: the row then
+ * looks like a normal local book (its file syncs to Readest Cloud, removing
+ * the server no longer touches it, reconcile stops treating it as a stub),
+ * while `metadata.calibreSource` stays as the identity anchor for
+ * re-download and progress sync. Works for both stubs and previously
+ * downloaded copies whose local file was deleted (identity via calibreSource).
+ *
  * Returns true when the file is on disk (newly downloaded or already there).
  */
 export const downloadCalibreBook = async (
@@ -32,17 +39,18 @@ export const downloadCalibreBook = async (
 ): Promise<boolean> => {
   if (await appService.exists(getLocalBookFilename(book), 'Books')) {
     book.downloadedAt = book.downloadedAt ?? Date.now();
+    book.filePath = undefined;
     return true;
   }
-  const parsed = parseCalibreFilePath(book.filePath);
-  if (!parsed) return false;
-  const server = findCalibreServerById(parsed.serverId);
+  const identity = resolveCalibreIdentity(book);
+  if (!identity) return false;
+  const server = findCalibreServerById(identity.serverId);
   if (!server || server.deletedAt) return false;
   const format = (options.format ?? book.metadata?.calibreSource?.format ?? '').toLowerCase();
   if (!format) return false;
 
   const client = createCalibreClient(server);
-  const url = client.buildDownloadUrl(parsed.libraryId, parsed.bookId, format);
+  const url = client.buildDownloadUrl(identity.libraryId, identity.bookId, format);
   const headers: Record<string, string> = {
     'User-Agent': READEST_OPDS_USER_AGENT,
     Accept: '*/*',
@@ -71,6 +79,10 @@ export const downloadCalibreBook = async (
     });
     await appService.copyFile(dstTmp, 'None', getLocalBookFilename(book), 'Books');
     book.downloadedAt = Date.now();
+    // The calibre:// path is an identity for a fileless stub; once the real
+    // file is in the managed shelf dir it would only misroute availability
+    // checks, cloud sync, and reconcile. calibreSource keeps the identity.
+    book.filePath = undefined;
     return true;
   } finally {
     try {

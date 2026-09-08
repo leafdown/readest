@@ -114,6 +114,12 @@ export const useCalibreProgressSync = (bookKey: string) => {
       const localTimestamp = bookData?.config?.updatedAt || ctx.book.updatedAt || 0;
       if ((latest.epoch ?? 0) * 1000 <= localTimestamp) return;
 
+      // The open was a deep link (?cfi= search-result jump): the view is
+      // previewing that target and the user hasn't read yet — don't yank them
+      // to the server position (same guard useProgressSync applies to its
+      // own pulled location).
+      if (useReaderStore.getState().getViewState(bookKey)?.previewMode) return;
+
       const view = getView(bookKey);
       if (!view) return;
       try {

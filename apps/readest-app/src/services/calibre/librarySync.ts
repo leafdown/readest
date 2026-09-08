@@ -81,13 +81,17 @@ export const reconcileCalibreBooks = (input: {
 
     const existing = stubsBySource.get(key);
     if (existing) {
-      const title = json.title || existing.title;
-      const author = json.authors?.join(', ') || existing.author;
+      // A user-edited stub (metadataUpdatedAt set) wins over the server's
+      // copy — mirrors reconcileAbsBooks' rule: a routine resync must not
+      // silently revert a rename the user made on this device. The sync
+      // bookkeeping (format, calibreSource stamp) still refreshes.
+      const keepMetadata = !!existing.metadataUpdatedAt;
+      const title = keepMetadata ? existing.title : json.title || existing.title;
+      const author = keepMetadata ? existing.author : json.authors?.join(', ') || existing.author;
       const changed =
-        existing.title !== title ||
-        existing.author !== author ||
         existing.format !== format.toUpperCase() ||
         existing.metadata?.calibreSource?.lastModified !== source.lastModified ||
+        (!keepMetadata && (existing.title !== title || existing.author !== author)) ||
         (existing.deletedAt ?? null) !== null;
       if (!changed) continue;
       const updated: Book = {
@@ -95,14 +99,19 @@ export const reconcileCalibreBooks = (input: {
         format: format.toUpperCase() as Book['format'],
         title,
         author,
-        sourceTitle: title,
+        sourceTitle: keepMetadata ? existing.sourceTitle : title,
         deletedAt: null,
         updatedAt: now,
       };
-      // Rebuild metadata wholesale so a server-side metadata edit propagates;
-      // a stub has no user-editable metadata of its own.
-      updated.metadata = buildCalibreBookMetadata(json, source);
-      hydrateCalibreBookFields(updated);
+      if (keepMetadata) {
+        // Refresh only the sync stamp; the user's edited metadata stays.
+        updated.metadata = { ...existing.metadata!, calibreSource: source };
+      } else {
+        // Rebuild metadata wholesale so a server-side metadata edit
+        // propagates to the still-unedited stub.
+        updated.metadata = buildCalibreBookMetadata(json, source);
+        hydrateCalibreBookFields(updated);
+      }
       upserts.push(updated);
     } else {
       const filePath = makeCalibreFilePath(server.id, libraryId, id);
@@ -208,17 +217,30 @@ export const syncCalibreServer = async (
     now,
   });
 
-  // Covers before the upserts reach the store (in-place mutation is only safe
-  // while the Book objects aren't referenced by the library yet).
-  const missingCover: { book: Book; libraryId: string; bookId: string }[] = [];
+  // Covers before the upserts reach the store. New/changed stubs are not
+  // referenced anywhere yet, so their cover fields mutate in place; EXISTING
+  // stubs still missing a cover (a failed download on an earlier pass) are
+  // cloned first and swapped back in at merge time — the store owns those
+  // objects and in-place edits would never be observed.
+  const upsertHashes = new Set(upserts.map((b) => b.hash));
+  const replaced = new Map<string, Book>();
+  const coverTasks: { book: Book; libraryId: string; bookId: string }[] = [];
   for (const book of upserts) {
     const parsed = parseCalibreFilePath(book.filePath);
     if (!parsed) continue;
     if (await appService.exists(getCoverFilename(book), 'Books')) continue;
-    missingCover.push({ book, libraryId: parsed.libraryId, bookId: parsed.bookId });
+    coverTasks.push({ book, libraryId: parsed.libraryId, bookId: parsed.bookId });
   }
-  for (let i = 0; i < missingCover.length; i += COVER_CONCURRENCY) {
-    const group = missingCover.slice(i, i + COVER_CONCURRENCY);
+  for (const book of library) {
+    const parsed = parseCalibreFilePath(book.filePath);
+    if (!parsed || parsed.serverId !== server.id || upsertHashes.has(book.hash)) continue;
+    if (await appService.exists(getCoverFilename(book), 'Books')) continue;
+    const clone = { ...book };
+    replaced.set(clone.hash, clone);
+    coverTasks.push({ book: clone, libraryId: parsed.libraryId, bookId: parsed.bookId });
+  }
+  for (let i = 0; i < coverTasks.length; i += COVER_CONCURRENCY) {
+    const group = coverTasks.slice(i, i + COVER_CONCURRENCY);
     await Promise.all(
       group.map(({ book, libraryId: libId, bookId }) =>
         downloadCalibreCover(appService, client, book, libId, bookId),
@@ -227,6 +249,7 @@ export const syncCalibreServer = async (
   }
 
   const merged = new Map(library.map((book) => [book.hash, book]));
+  for (const book of replaced.values()) merged.set(book.hash, book);
   for (const book of upserts) merged.set(book.hash, book);
   for (const hash of tombstoneHashes) {
     const existing = merged.get(hash);

@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   computeCalibreServerId,
+  isCalibreBook,
+  isCalibreStub,
   makeCalibreFilePath,
   parseCalibreFilePath,
   pickPreferredFormat,
+  resolveCalibreIdentity,
 } from '@/utils/calibre';
 
 describe('pickPreferredFormat', () => {
@@ -63,5 +66,51 @@ describe('computeCalibreServerId', () => {
     const a = computeCalibreServerId('https://calibre.example.com');
     expect(computeCalibreServerId('https://other.example.com')).not.toBe(a);
     expect(computeCalibreServerId('https://calibre.example.com/calibre')).not.toBe(a);
+  });
+});
+
+describe('calibre book classification and identity', () => {
+  const stubBook = {
+    filePath: makeCalibreFilePath('srv1', 'lib', '42'),
+  };
+  const downloadedBook = {
+    metadata: {
+      title: 'Book 42',
+      author: 'Author A',
+      language: '',
+      calibreSource: { serverId: 'srv1', libraryId: 'lib', bookId: '42', format: 'epub' },
+    },
+  };
+  const localBook = { filePath: '/Users/me/Books/abc/book.epub' };
+
+  it('flags stubs and downloaded calibre books, not local ones', () => {
+    expect(isCalibreStub({ ...stubBook } as never)).toBe(true);
+    expect(isCalibreStub(downloadedBook as never)).toBe(false);
+    expect(isCalibreBook(stubBook)).toBe(true);
+    expect(isCalibreBook(downloadedBook)).toBe(true);
+    expect(isCalibreBook(localBook)).toBe(false);
+  });
+
+  it('resolves identity from the stub filePath first', () => {
+    expect(resolveCalibreIdentity(stubBook)).toEqual({
+      serverId: 'srv1',
+      libraryId: 'lib',
+      bookId: '42',
+    });
+  });
+
+  it('resolves identity from calibreSource when the filePath was cleared', () => {
+    expect(resolveCalibreIdentity(downloadedBook)).toEqual({
+      serverId: 'srv1',
+      libraryId: 'lib',
+      bookId: '42',
+    });
+  });
+
+  it('returns null for non-calibre books and incomplete sources', () => {
+    expect(resolveCalibreIdentity(localBook)).toBeNull();
+    expect(
+      resolveCalibreIdentity({ metadata: { calibreSource: { serverId: 'srv1' } } as never }),
+    ).toBeNull();
   });
 });

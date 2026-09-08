@@ -26,6 +26,7 @@ import { useThemeStore } from '@/store/themeStore';
 import { useAutoFocus } from '@/hooks/useAutoFocus';
 import { useSettingsStore } from '@/store/settingsStore';
 import { isAbsBookOrphaned, useABSServerStore } from '@/store/absServerStore';
+import { isCalibreBookOrphaned, useCalibreServerStore } from '@/store/calibreServerStore';
 import { useLibraryStore } from '@/store/libraryStore';
 import { selectActiveBookDownloadProgress, useTransferStore } from '@/store/transferStore';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -292,12 +293,15 @@ const Bookshelf: React.FC<BookshelfProps> = ({
   // the store and keep syncing; they reappear the moment the server row
   // lands. `absServers` and `settings` are deps because the orphan check
   // reads the server store with a settings fallback, both of which hydrate
-  // asynchronously after the cached library first renders.
+  // asynchronously after the cached library first renders. Calibre sync
+  // stubs get the same treatment for the same reason (e.g. a backup restored
+  // without the server's credentials).
   const absServers = useABSServerStore((state) => state.servers);
+  const calibreServers = useCalibreServerStore((state) => state.servers);
   const visibleBooks = useMemo(
-    () => libraryBooks.filter((book) => !isAbsBookOrphaned(book)),
+    () => libraryBooks.filter((book) => !isAbsBookOrphaned(book) && !isCalibreBookOrphaned(book)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [libraryBooks, absServers, settings],
+    [libraryBooks, absServers, calibreServers, settings],
   );
 
   const filteredBooks = useMemo(() => {
