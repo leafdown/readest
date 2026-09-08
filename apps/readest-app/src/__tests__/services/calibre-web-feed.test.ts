@@ -101,4 +101,45 @@ describe('parseCalibreWebFeed', () => {
       /Enable OPDS/,
     );
   });
+
+  it('recovers from real-world unescaped metadata (entities, bare &, control chars)', () => {
+    // Calibre-Web injects book-comment HTML into the Atom document with
+    // |safe: &nbsp;/&mdash; are undefined in XML and a bare & breaks it —
+    // the #1 reason real servers fail strict parsing.
+    const broken = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dcterms="http://purl.org/dc/terms/">
+  <id>urn:uuid:root</id>
+  <entry>
+    <title>Tom &amp; Jerry \u0007Annual&nbsp;Edition</title>
+    <id>urn:uuid:book-14</id>
+    <updated>2026-08-03T10:00:00+00:00</updated>
+    <author><name>Author C</name></author>
+    <content type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><p>Tom &amp; Jerry &mdash; the &quot;whole&quot; race&hellip;</p></div></content>
+    <link rel="http://opds-spec.org/acquisition" href="/opds/download/14/epub/" length="1" title="EPUB" type="application/epub+zip"/>
+  </entry>
+</feed>`;
+    const { entries, nextHref } = parseCalibreWebFeed(broken);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.id).toBe('14');
+    expect(entries[0]!.json.title).toContain('Tom');
+    expect(entries[0]!.json.title).toContain('\u00A0');
+    // Stored as re-serialized HTML: & is correctly escaped for display.
+    expect(entries[0]!.json.comments).toContain('Jerry');
+    expect(nextHref).toBeUndefined();
+  });
+
+  it('keeps an unknown named entity as literal text instead of failing', () => {
+    const unknownEntity = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>urn:uuid:root</id>
+  <entry>
+    <title>Weird &foo; Title</title>
+    <id>urn:uuid:book-15</id>
+    <link rel="http://opds-spec.org/acquisition" href="/opds/download/15/mobi/" length="1" title="MOBI" type="application/x-mobipocket-ebook"/>
+  </entry>
+</feed>`;
+    const { entries } = parseCalibreWebFeed(unknownEntity);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.json.title).toBe('Weird &foo; Title');
+  });
 });

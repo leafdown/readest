@@ -327,7 +327,16 @@ export class CalibreClient {
           'Calibre-Web OPDS feed is not reachable. Enable OPDS and basic authentication on the server.',
         );
       }
-      const feed = parseCalibreWebFeed(await res.text());
+      const text = await res.text();
+      let feed;
+      try {
+        feed = parseCalibreWebFeed(text);
+      } catch (error) {
+        // Surface the page so a broken feed (usually one book's unescaped
+        // metadata) can be found and fixed on the server.
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`${message} (while reading ${href})`);
+      }
       books.push(...feed.entries);
       href = feed.nextHref;
     }

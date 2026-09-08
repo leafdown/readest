@@ -30,16 +30,83 @@ export interface CalibreWebFeed {
 const ACQUISITION_REL = 'http://opds-spec.org/acquisition';
 const DOWNLOAD_HREF = /\/opds\/download\/(\d+)\/([^/?#]+)/;
 
-const textOf = (element: Element, tag: string): string =>
-  element.getElementsByTagName(tag)[0]?.textContent?.trim() ?? '';
+/**
+ * Strict XML rejects things Calibre-Web's feed template happily emits, most
+ * notoriously raw book-comment HTML injected with `|safe` into the Atom
+ * document (`&nbsp;`, bare `&`, undefined named entities). Clean what is
+ * cleanly cleanable — control characters and known non-XML named entities —
+ * parse as XML, and fall back to the forgiving HTML parser. The extraction
+ * below works against both trees: prefix-less lookups (`entry`, `link`,
+ * `content`, ...) behave the same, and namespaced `dcterms:language` is
+ * matched by candidates since HTML mode keeps the prefix in nodeName (and
+ * drops the self-closing slash on unknown elements like `<category/>`, which
+ * only re-nests later siblings the descendant searches still reach).
+ */
+const XML_ILLEGAL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g;
+const HTML_ENTITY = /&([a-zA-Z][a-zA-Z0-9]*);/g;
+const NAMED_ENTITIES: Record<string, string> = {
+  nbsp: '\u00A0',
+  mdash: '\u2014',
+  ndash: '\u2013',
+  hellip: '\u2026',
+  lsquo: '\u2018',
+  rsquo: '\u2019',
+  ldquo: '\u201C',
+  rdquo: '\u201D',
+  copy: '\u00A9',
+  reg: '\u00AE',
+  trade: '\u2122',
+  deg: '\u00B0',
+  plusmn: '\u00B1',
+  times: '\u00D7',
+  divide: '\u00F7',
+  eacute: '\u00E9',
+  egrave: '\u00E8',
+  agrave: '\u00E0',
+  ccedil: '\u00E7',
+  uuml: '\u00FC',
+  ouml: '\u00F6',
+  auml: '\u00E4',
+  szlig: '\u00DF',
+};
+
+const parseFeedDocument = (xml: string): Document => {
+  const cleaned = xml
+    .replace(XML_ILLEGAL_CHARS, '')
+    .replace(HTML_ENTITY, (whole, name: string) => NAMED_ENTITIES[name] ?? whole);
+  const strict = new DOMParser().parseFromString(cleaned, 'text/xml');
+  if (
+    strict.documentElement?.localName === 'feed' &&
+    strict.getElementsByTagName('parsererror').length === 0
+  ) {
+    return strict;
+  }
+  // Recovery mode: the HTML parser accepts bare `&`, unknown entities, and
+  // tag soup. A document that isn't a feed at all (the login page) is
+  // rejected by the caller's root check.
+  return new DOMParser().parseFromString(cleaned, 'text/html');
+};
+
+/** Elements by local name across both XML and HTML parser trees. */
+const elementsNamed = (root: Element | Document, ...names: string[]): Element[] =>
+  Array.from(root.getElementsByTagName('*')).filter((el) => {
+    const nodeName = el.nodeName;
+    const localName = el.localName;
+    return names.some((name) => localName === name || nodeName === name);
+  });
+
+const textOf = (element: Element, tag: string): string => {
+  const el = elementsNamed(element, tag)[0];
+  return el?.textContent?.trim() ?? '';
+};
 
 export const parseCalibreWebFeed = (xml: string): CalibreWebFeed => {
-  const doc = new DOMParser().parseFromString(xml, 'text/xml');
-  if (doc.getElementsByTagName('parsererror').length > 0) {
-    throw new Error('Calibre-Web returned an invalid OPDS feed');
-  }
-  const root = doc.documentElement;
-  if (root?.localName !== 'feed') {
+  const doc = parseFeedDocument(xml);
+  // The HTML parser wraps everything in <html>, so the feed element may not
+  // be the documentElement — find it wherever it lives.
+  const root =
+    doc.documentElement?.localName === 'feed' ? doc.documentElement : elementsNamed(doc, 'feed')[0];
+  if (!root) {
     // A 302 into the login page (OPDS basic auth disabled) surfaces here.
     throw new Error(
       'Calibre-Web OPDS feed not found. Enable OPDS and basic authentication on the server.',
@@ -47,13 +114,13 @@ export const parseCalibreWebFeed = (xml: string): CalibreWebFeed => {
   }
 
   const nextHref =
-    Array.from(root.getElementsByTagName('link'))
+    elementsNamed(root, 'link')
       .find((link) => link.getAttribute('rel') === 'next')
       ?.getAttribute('href') ?? undefined;
 
   const entries: CalibreServerBook[] = [];
-  for (const entry of Array.from(root.getElementsByTagName('entry'))) {
-    const links = Array.from(entry.getElementsByTagName('link'));
+  for (const entry of elementsNamed(root, 'entry')) {
+    const links = elementsNamed(entry, 'link');
     const acquisitions = links.filter((link) => link.getAttribute('rel') === ACQUISITION_REL);
     if (acquisitions.length === 0) continue; // navigation entry
 
@@ -72,29 +139,29 @@ export const parseCalibreWebFeed = (xml: string): CalibreWebFeed => {
 
     const json: CalibreBookJson = {
       title: textOf(entry, 'title') || 'Untitled',
-      authors: Array.from(entry.getElementsByTagName('author'))
+      authors: elementsNamed(entry, 'author')
         .map((author) => textOf(author, 'name'))
         .filter(Boolean),
       formats,
       last_modified: textOf(entry, 'updated') || undefined,
       pubdate: textOf(entry, 'published') || undefined,
-      languages: Array.from(entry.getElementsByTagNameNS('http://purl.org/dc/terms/', 'language'))
+      languages: elementsNamed(entry, 'language', 'dcterms:language')
         .map((lang) => lang.textContent?.trim() ?? '')
         .filter(Boolean),
-      tags: entry.getElementsByTagName('category').length
-        ? Array.from(entry.getElementsByTagName('category'))
+      tags: elementsNamed(entry, 'category').length
+        ? elementsNamed(entry, 'category')
             .map((category) => category.getAttribute('term') ?? '')
             .filter(Boolean)
         : null,
       publisher: textOf(entry, 'publisher') || null,
       thumbnail:
-        Array.from(links)
+        links
           .find((link) => (link.getAttribute('rel') ?? '').startsWith('http://opds-spec.org/image'))
           ?.getAttribute('href') ?? undefined,
     };
 
     // Rating/series/description only exist inside the xhtml content blob.
-    const content = entry.getElementsByTagName('content')[0]?.textContent ?? '';
+    const content = elementsNamed(entry, 'content')[0]?.textContent ?? '';
     const stars = content.match(/RATING:\s*([★]+)/);
     if (stars) json.rating = stars[1]!.length;
     const series = content.match(/SERIES:\s*(.+?)\s*\[([^\]]+)\]/);
@@ -103,9 +170,9 @@ export const parseCalibreWebFeed = (xml: string): CalibreWebFeed => {
       const index = Number.parseFloat(series[2]!);
       if (!Number.isNaN(index)) json.series_index = index;
     }
-    const paragraphs = entry.getElementsByTagName('p');
+    const paragraphs = elementsNamed(entry, 'p');
     if (paragraphs.length > 0) {
-      json.comments = Array.from(paragraphs)
+      json.comments = paragraphs
         .map((p) => p.innerHTML?.trim() ?? p.textContent?.trim() ?? '')
         .filter(Boolean)
         .join('<br/>');
