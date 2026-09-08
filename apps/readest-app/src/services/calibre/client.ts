@@ -1,5 +1,6 @@
 import type {
   CalibreBookJson,
+  CalibreFlavor,
   CalibreLibraryInfo,
   CalibrePosition,
   CalibreSearchResult,
@@ -8,6 +9,14 @@ import type {
 import { isTauriAppPlatform } from '@/services/environment';
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
 import { fetchWithAuth, needsProxy, probeAuth } from '@/app/opds/utils/opdsReq';
+import { parseCalibreWebFeed } from '@/services/calibre/calibreWebClient';
+import type { CalibreServerBook } from '@/services/calibre/librarySync';
+
+/** Safety cap for the Calibre-Web OPDS page walk (per page ~20-60 books). */
+const MAX_FEED_PAGES = 2000;
+
+/** Metadata batch size for GET /ajax/books?ids=... (URL length safety). */
+const METADATA_BATCH_SIZE = 50;
 
 /**
  * Platform fetch resolved at call time (never at module scope): this module
@@ -15,6 +24,15 @@ import { fetchWithAuth, needsProxy, probeAuth } from '@/app/opds/utils/opdsReq';
  * on the server during the web build, where `window` does not exist.
  */
 const platformFetch = (): typeof fetch => (isTauriAppPlatform() ? tauriFetch : window.fetch);
+
+/** Fetch error carrying the HTTP status, so flavor detection can read it. */
+export class CalibreHttpError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
 
 /**
  * Client for the official Calibre content server JSON API
@@ -25,6 +43,11 @@ const platformFetch = (): typeof fetch => (isTauriAppPlatform() ? tauriFetch : w
  */
 export class CalibreClient {
   private server: CalibreServer;
+  /**
+   * The detected server flavor. Initialized from the persisted row and
+   * refined by getLibraryInfo; callers persist it back via updateServer.
+   */
+  private flavor: CalibreFlavor | undefined;
   /**
    * A Basic Authorization header that already authenticated once. Reusable
    * verbatim across requests; Digest headers are bound to one request URI
@@ -37,6 +60,7 @@ export class CalibreClient {
 
   constructor(server: CalibreServer) {
     this.server = server;
+    this.flavor = server.flavor;
   }
 
   /** Base URL without trailing slash; user-supplied path prefixes survive. */
@@ -65,7 +89,7 @@ export class CalibreClient {
       headers: { Accept: 'application/json' },
     });
     if (!res.ok) {
-      throw new Error(`Calibre request failed: ${path} -> ${res.status}`);
+      throw new CalibreHttpError(`Calibre request failed: ${path} -> ${res.status}`, res.status);
     }
     return (await res.json()) as T;
   }
@@ -125,17 +149,58 @@ export class CalibreClient {
     return res;
   }
 
-  /** GET /ajax/library-info -> library list + default library. */
+  /**
+   * Library list + default library, with server-flavor detection.
+   *
+   * The official calibre-server answers /ajax/library-info; Calibre-Web (a
+   * Flask app whose login form sits where HTTP auth would be) 404s it and
+   * only exposes its library through the OPDS feed. Detection: official
+   * first; a 404 flips the client to calibre-web after confirming /opds.
+   */
   async getLibraryInfo(): Promise<CalibreLibraryInfo> {
-    const data = await this.fetchJSON<{
-      library_map: Record<string, string>;
-      default_library: string;
-    }>('/ajax/library-info');
-    const libraries = Object.entries(data.library_map ?? {}).map(([id, name]) => ({
-      id,
-      name: name || id,
-    }));
-    return { libraries, defaultLibraryId: data.default_library };
+    if (this.flavor === 'calibre-web') return this.calibreWebLibraryInfo();
+    let official: Omit<CalibreLibraryInfo, 'flavor'>;
+    try {
+      const data = await this.fetchJSON<{
+        library_map: Record<string, string>;
+        default_library: string;
+      }>('/ajax/library-info');
+      const libraries = Object.entries(data.library_map ?? {}).map(([id, name]) => ({
+        id,
+        name: name || id,
+      }));
+      official = { libraries, defaultLibraryId: data.default_library };
+      this.flavor = 'calibre';
+      return { ...official, flavor: 'calibre' };
+    } catch (error) {
+      // Anything other than a clean 404 (auth failure, network error, HTML
+      // from a proxy) is a real failure, not a flavor signal.
+      if (!(error instanceof CalibreHttpError) || error.status !== 404) throw error;
+    }
+    await this.confirmCalibreWeb();
+    return this.calibreWebLibraryInfo();
+  }
+
+  private calibreWebLibraryInfo(): CalibreLibraryInfo {
+    return {
+      libraries: [{ id: 'calibre-web', name: 'Calibre-Web' }],
+      defaultLibraryId: 'calibre-web',
+      flavor: 'calibre-web',
+    };
+  }
+
+  private async confirmCalibreWeb(): Promise<void> {
+    this.flavor = 'calibre-web';
+    const res = await this.authedFetch(this.buildUrl('/opds'), {
+      headers: { Accept: 'application/atom+xml' },
+    });
+    if (res.ok) return;
+    if (res.status === 401) {
+      throw new Error('Calibre-Web OPDS authentication failed. Check the username and password.');
+    }
+    throw new Error(
+      'Calibre-Web OPDS feed is not reachable. Enable OPDS and basic authentication on the server.',
+    );
   }
 
   /** GET /ajax/search -> one page of matching book ids. */
@@ -190,31 +255,97 @@ export class CalibreClient {
     );
   }
 
-  /** Authenticated thumbnail URL (JPEG) for grid covers. */
+  /** Authenticated thumbnail/cover URL for grid covers. */
   buildThumbUrl(libraryId: string, bookId: string | number, size = '400x600'): string {
+    if (this.flavor === 'calibre-web') {
+      // Calibre-Web's fixed-size renditions; the plain cover is the fallback.
+      return this.buildUrl(`/opds/cover_240_240/${bookId}`);
+    }
     return this.buildUrl(`/get/thumb/${bookId}/${CalibreClient.libSeg(libraryId)}`, { sz: size });
   }
 
   /** Authenticated full cover URL. */
   buildCoverUrl(libraryId: string, bookId: string | number): string {
+    if (this.flavor === 'calibre-web') {
+      return this.buildUrl(`/opds/cover/${bookId}`);
+    }
     return this.buildUrl(`/get/cover/${bookId}/${CalibreClient.libSeg(libraryId)}`);
   }
 
   /** Authenticated download URL for one format (lowercase ext, e.g. `epub`). */
   buildDownloadUrl(libraryId: string, bookId: string | number, fmt: string): string {
+    if (this.flavor === 'calibre-web') {
+      // The route is declared with a trailing slash; Flask would redirect
+      // /opds/download/12/epub to the slashed form, but keep it exact.
+      return this.buildUrl(`/opds/download/${bookId}/${fmt.toLowerCase()}/`);
+    }
     return this.buildUrl(`/get/${fmt.toLowerCase()}/${bookId}/${CalibreClient.libSeg(libraryId)}`);
+  }
+
+  /**
+   * Every book in the library with metadata. Official servers go through the
+   * /ajax search + batch metadata API; Calibre-Web has no batch JSON API, so
+   * the OPDS acquisition feed is walked page by page (each entry already
+   * carries full metadata).
+   */
+  async listAllBooks(libraryId: string): Promise<CalibreServerBook[]> {
+    if (this.flavor === 'calibre-web') return this.listCalibreWebBooks();
+    const bookIds = await this.getAllBookIds(libraryId);
+    const serverBooks: CalibreServerBook[] = [];
+    for (let i = 0; i < bookIds.length; i += METADATA_BATCH_SIZE) {
+      const batch = bookIds.slice(i, i + METADATA_BATCH_SIZE);
+      const metadata = await this.getBooks(libraryId, batch);
+      for (const id of batch) {
+        const json = metadata[String(id)];
+        if (json) serverBooks.push({ id: String(id), json });
+      }
+    }
+    return serverBooks;
+  }
+
+  /**
+   * Walk Calibre-Web's "all books" OPDS feed (/opds/books/letter/00 serves
+   * every book regardless of the letter filter) following the server's own
+   * rel="next" links — calibre-web derives the page index from the offset,
+   * so only its computed hrefs are safe to request.
+   */
+  private async listCalibreWebBooks(): Promise<CalibreServerBook[]> {
+    const books: CalibreServerBook[] = [];
+    let href: string | undefined = '/opds/books/letter/00';
+    const seen = new Set<string>();
+    for (let page = 0; href && page < MAX_FEED_PAGES; page++) {
+      if (seen.has(href)) break; // defensive: a broken next link must not loop
+      seen.add(href);
+      const res = await this.authedFetch(this.buildUrl(href), {
+        headers: { Accept: 'application/atom+xml' },
+      });
+      if (!res.ok) {
+        throw new CalibreHttpError(`Calibre-Web feed request failed -> ${res.status}`, res.status);
+      }
+      if ((res.headers.get('content-type') ?? '').includes('text/html')) {
+        throw new Error(
+          'Calibre-Web OPDS feed is not reachable. Enable OPDS and basic authentication on the server.',
+        );
+      }
+      const feed = parseCalibreWebFeed(await res.text());
+      books.push(...feed.entries);
+      href = feed.nextHref;
+    }
+    return books;
   }
 
   /**
    * GET /book-get-last-read-position -> positions keyed `"<bookId>:<fmt>"`.
    * `which` lists the pairs to query in the server's wire form
    * `bookId1-fmt1_bookId2-fmt2` (srv/books.py splits on `_`, pairs on `-`).
+   * Official servers only — calibre-web has no position API, and the caller
+   * guards on flavor before reaching here.
    */
   async getLastReadPosition(
     libraryId: string,
     which: string[],
   ): Promise<Record<string, CalibrePosition[]>> {
-    if (which.length === 0) return {};
+    if (which.length === 0 || this.flavor === 'calibre-web') return {};
     return this.fetchJSON<Record<string, CalibrePosition[]>>(
       `/book-get-last-read-position/${CalibreClient.libSeg(libraryId)}/${which.join('_')}`,
     );
@@ -227,6 +358,7 @@ export class CalibreClient {
     fmt: string,
     position: { device: string; cfi: string; pos_frac: number },
   ): Promise<void> {
+    if (this.flavor === 'calibre-web') return; // no position API
     const res = await this.authedFetch(
       this.buildUrl(
         `/book-set-last-read-position/${CalibreClient.libSeg(libraryId)}/${bookId}/${fmt.toLowerCase()}`,

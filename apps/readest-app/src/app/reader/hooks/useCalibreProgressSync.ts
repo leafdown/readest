@@ -43,6 +43,9 @@ export const useCalibreProgressSync = (bookKey: string) => {
     if (!book || !source) return null;
     const server = findCalibreServerById(source.serverId);
     if (!server || server.deletedAt || server.disabled) return null;
+    // Reading positions are an official-calibre-server API; Calibre-Web has
+    // none (its OPDS/Kobo surfaces don't help here).
+    if (server.flavor === 'calibre-web') return null;
     return { book, source, server };
   }, [bookKey, getBookData]);
 

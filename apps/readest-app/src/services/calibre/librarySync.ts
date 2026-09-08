@@ -16,8 +16,6 @@ import { eventDispatcher } from '@/utils/event';
 import { useCalibreServerStore } from '@/store/calibreServerStore';
 import { useLibraryStore } from '@/store/libraryStore';
 
-/** Metadata batch size for GET /ajax/books?ids=... (URL length safety). */
-const METADATA_BATCH_SIZE = 50;
 /** Parallel cover downloads during a sync pass. */
 const COVER_CONCURRENCY = 4;
 
@@ -185,27 +183,30 @@ export const syncCalibreServer = async (
   const client = createCalibreClient(server);
 
   const info = await client.getLibraryInfo();
-  const availableIds = new Set(info.libraries.map((l) => l.id));
-  const libraryId =
-    server.libraryId && availableIds.has(server.libraryId)
-      ? server.libraryId
-      : info.defaultLibraryId;
+  // Persist a newly-detected flavor (rows from before detection have none).
+  if (info.flavor !== server.flavor) {
+    useCalibreServerStore.getState().updateServer(server.id, { flavor: info.flavor });
+    server = { ...server, flavor: info.flavor };
+  }
+  let libraryId: string;
+  if (info.flavor === 'calibre-web') {
+    // Calibre-Web exposes a single pseudo-library; per-user visibility is
+    // configured in the Calibre-Web UI, not here.
+    libraryId = 'calibre-web';
+  } else {
+    const availableIds = new Set(info.libraries.map((l) => l.id));
+    libraryId =
+      server.libraryId && availableIds.has(server.libraryId)
+        ? server.libraryId
+        : info.defaultLibraryId;
+  }
   const libraryName = info.libraries.find((l) => l.id === libraryId)?.name ?? libraryId;
   if (libraryId !== server.libraryId || libraryName !== server.libraryName) {
     useCalibreServerStore.getState().updateServer(server.id, { libraryId, libraryName });
     server = { ...server, libraryId, libraryName };
   }
 
-  const bookIds = await client.getAllBookIds(libraryId);
-  const serverBooks: CalibreServerBook[] = [];
-  for (let i = 0; i < bookIds.length; i += METADATA_BATCH_SIZE) {
-    const batch = bookIds.slice(i, i + METADATA_BATCH_SIZE);
-    const metadata = await client.getBooks(libraryId, batch);
-    for (const id of batch) {
-      const json = metadata[String(id)];
-      if (json) serverBooks.push({ id: String(id), json });
-    }
-  }
+  const serverBooks = await client.listAllBooks(libraryId);
 
   const now = Date.now();
   const { library } = useLibraryStore.getState();

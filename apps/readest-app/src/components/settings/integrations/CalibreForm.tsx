@@ -68,6 +68,7 @@ const CalibreForm: React.FC<CalibreFormProps> = ({ onBack }) => {
       const info: CalibreLibraryInfo = await client.getLibraryInfo();
       const added = useCalibreServerStore.getState().addServer({
         ...draft,
+        flavor: info.flavor,
         libraryId: info.defaultLibraryId,
         libraryName: info.libraries.find((l) => l.id === info.defaultLibraryId)?.name,
       });
@@ -201,7 +202,7 @@ const CalibreForm: React.FC<CalibreFormProps> = ({ onBack }) => {
             <Tips>
               <li>
                 {_(
-                  'Point this at a calibre content server (calibre-server) URL. Reading positions sync back when you connect as a logged-in user.',
+                  'Works with both a calibre content server (calibre-server) and Calibre-Web, detected automatically. Reading positions sync back on the official server when you connect as a logged-in user.',
                 )}
               </li>
             </Tips>

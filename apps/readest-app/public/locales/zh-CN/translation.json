@@ -2132,6 +2132,7 @@
   "Failed to connect to the Calibre server. Check the URL and credentials.": "连接 Calibre 服务器失败，请检查网址和凭据。",
   "Leave empty for anonymous access": "留空则匿名访问",
   "Point this at a calibre content server (calibre-server) URL. Reading positions sync back when you connect as a logged-in user.": "填写 calibre 内容服务器（calibre-server）的地址。以已登录用户连接时，阅读进度会同步回服务器。",
+  "Works with both a calibre content server (calibre-server) and Calibre-Web, detected automatically. Reading positions sync back on the official server when you connect as a logged-in user.": "同时支持 calibre 内容服务器（calibre-server）和 Calibre-Web，自动识别服务器类型。官方服务器以已登录用户连接时，阅读进度会同步回服务器。",
   "Connected as {{username}}": "以 {{username}} 身份连接",
   "Anonymous access": "匿名访问",
   "Library to Sync": "要同步的书库",

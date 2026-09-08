@@ -1,3 +1,11 @@
+/**
+ * Which server implementation answers at `url`. The official `calibre-server`
+ * exposes the /ajax JSON API; Calibre-Web is a Flask app whose books are
+ * browsed through its OPDS feed. Auto-detected at connect time (see
+ * CalibreClient.getLibraryInfo) and persisted on the row.
+ */
+export type CalibreFlavor = 'calibre' | 'calibre-web';
+
 /** A configured Calibre content server. Mirrors ABSServer (src/types/audiobookshelf.ts). */
 export interface CalibreServer {
   /**
@@ -15,6 +23,8 @@ export interface CalibreServer {
   /** Selected calibre library id; absent = the server's default library. */
   libraryId?: string;
   libraryName?: string;
+  /** Server flavor; absent means 'calibre' (rows from before detection existed). */
+  flavor?: CalibreFlavor;
   lastSyncedAt?: number;
   disabled?: boolean;
   addedAt?: number;
@@ -25,6 +35,8 @@ export interface CalibreServer {
 export interface CalibreLibraryInfo {
   libraries: { id: string; name: string }[];
   defaultLibraryId: string;
+  /** The detected server flavor. */
+  flavor: CalibreFlavor;
 }
 
 /**
