@@ -12,6 +12,9 @@ import {
   isReadestCloudEnabled,
 } from '@/services/sync/cloudSyncProvider';
 import { runFileBookDownload, runFileBookUpload } from '@/services/sync/file/runLibrarySync';
+import { isCalibreStub } from '@/utils/calibre';
+import { downloadCalibreBook } from '@/services/calibre/download';
+import { getLocalBookFilename } from '@/utils/book';
 
 /**
  * One throttle runs per in-flight transfer, and every emit re-renders the
@@ -134,6 +137,43 @@ export const useBookTransferActions = (
   const handleBookDownload = useCallback(
     async (book: Book, downloadOptions: BookDownloadOptions = {}) => {
       const { redownload = false, queued = false, silent = false } = downloadOptions;
+      // A Calibre sync stub downloads from its own server into the managed
+      // shelf dir (keeping the row's hash), not from any cloud mirror. Its
+      // on-disk file doubles as the "already downloaded" check, so a
+      // redownload request must evict it first.
+      if (isCalibreStub(book)) {
+        if (!appService) return false;
+        if (redownload) {
+          await appService.deleteFile(getLocalBookFilename(book), 'Books').catch(() => {});
+        }
+        const tracker = trackProgress(book.hash);
+        try {
+          const ok = await downloadCalibreBook(appService, book, {
+            onProgress: tracker.onProgress,
+          });
+          tracker.done();
+          if (ok) {
+            await updateBook(envConfig, book);
+            if (!silent) {
+              eventDispatcher.dispatch('toast', {
+                type: 'info',
+                timeout: 2000,
+                message: _('Book downloaded: {{title}}', { title: book.title }),
+              });
+            }
+            return true;
+          }
+        } catch {
+          tracker.done();
+        }
+        if (!silent) {
+          eventDispatcher.dispatch('toast', {
+            message: _('Failed to download book: {{title}}', { title: book.title }),
+            type: 'error',
+          });
+        }
+        return false;
+      }
       const settingsNow = useSettingsStore.getState().settings;
       const backends = getActiveFileSyncBackends(settingsNow);
       const readest = isReadestCloudEnabled(settingsNow);

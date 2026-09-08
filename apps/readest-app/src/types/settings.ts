@@ -5,6 +5,7 @@ import { HighlightColor, HighlightStyle, UserHighlightColor, ViewSettings } from
 import { OPDSCatalog } from './opds';
 import { WebSource } from './webSource';
 import { ABSServer } from './audiobookshelf';
+import type { CalibreServer } from './calibre';
 import type { AISettings } from '@/services/ai/types';
 import type { NotebookTab } from '@/store/notebookStore';
 import type { DictionarySettings, ImportedDictionary } from '@/services/dictionaries/types';
@@ -500,6 +501,8 @@ export interface SystemSettings {
   dictionarySettings: DictionarySettings;
   opdsCatalogs: OPDSCatalog[];
   absServers: ABSServer[];
+  /** Configured Calibre content servers. Device-local in this settings file; synced books carry their own metadata. */
+  calibreServers?: CalibreServer[];
   /** Saved sites for the "From Web Browser" import (#5775). Device-local. */
   webSources?: WebSource[];
   metadataSeriesCollapsed: boolean;

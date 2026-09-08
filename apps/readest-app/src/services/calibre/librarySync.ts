@@ -1,0 +1,280 @@
+import type { CalibreBookJson, CalibreServer } from '@/types/calibre';
+import type { AppService } from '@/types/system';
+import type { Book } from '@/types/book';
+import { createCalibreClient } from '@/services/calibre/client';
+import {
+  buildCalibreBookMetadata,
+  hydrateCalibreBookFields,
+  makeCalibreFilePath,
+  parseCalibreFilePath,
+  pickPreferredFormat,
+} from '@/utils/calibre';
+import { getCoverFilename } from '@/utils/book';
+import { md5 } from '@/utils/md5';
+import { stubTranslation as _ } from '@/utils/misc';
+import { eventDispatcher } from '@/utils/event';
+import { useCalibreServerStore } from '@/store/calibreServerStore';
+import { useLibraryStore } from '@/store/libraryStore';
+
+/** Metadata batch size for GET /ajax/books?ids=... (URL length safety). */
+const METADATA_BATCH_SIZE = 50;
+/** Parallel cover downloads during a sync pass. */
+const COVER_CONCURRENCY = 4;
+
+/** Source identity of one server book inside the reconcile input. */
+export interface CalibreServerBook {
+  id: string;
+  json: CalibreBookJson;
+}
+
+const sourceKey = (libraryId: string, bookId: string): string => `${libraryId}/${bookId}`;
+
+/**
+ * Pure: compute the library delta for one server. Exported for tests.
+ *
+ * Matching is by `metadata.calibreSource` identity (downloaded copies) and by
+ * the synthetic `calibre://` filePath (stubs). A book whose sync stub was
+ * already downloaded is a normal local book now — reconcile leaves it alone
+ * forever (local wins), and tombstones only ever hit undownloaded stubs.
+ */
+export const reconcileCalibreBooks = (input: {
+  server: Pick<CalibreServer, 'id'>;
+  libraryId: string;
+  serverBooks: CalibreServerBook[];
+  library: Book[];
+  now: number;
+}): { upserts: Book[]; tombstoneHashes: string[] } => {
+  const { server, libraryId, serverBooks, library, now } = input;
+
+  // Books of THIS server only: stubs by filePath, downloaded by metadata.
+  const stubsBySource = new Map<string, Book>();
+  const downloadedBySource = new Set<string>();
+  for (const book of library) {
+    const parsed = parseCalibreFilePath(book.filePath);
+    if (parsed && parsed.serverId === server.id) {
+      stubsBySource.set(sourceKey(parsed.libraryId, parsed.bookId), book);
+      continue;
+    }
+    const source = book.metadata?.calibreSource;
+    if (source && source.serverId === server.id) {
+      downloadedBySource.add(sourceKey(source.libraryId, source.bookId));
+    }
+  }
+
+  const upserts: Book[] = [];
+  const seenSources = new Set<string>();
+
+  for (const { id, json } of serverBooks) {
+    const key = sourceKey(libraryId, id);
+    seenSources.add(key);
+    if (downloadedBySource.has(key)) continue;
+
+    const format = pickPreferredFormat(json.formats);
+    if (!format) continue; // nothing Readest can open; don't clutter the shelf
+    const source = {
+      serverId: server.id,
+      libraryId,
+      bookId: id,
+      format,
+      lastModified: json.last_modified ?? undefined,
+    };
+
+    const existing = stubsBySource.get(key);
+    if (existing) {
+      const title = json.title || existing.title;
+      const author = json.authors?.join(', ') || existing.author;
+      const changed =
+        existing.title !== title ||
+        existing.author !== author ||
+        existing.format !== format.toUpperCase() ||
+        existing.metadata?.calibreSource?.lastModified !== source.lastModified ||
+        (existing.deletedAt ?? null) !== null;
+      if (!changed) continue;
+      const updated: Book = {
+        ...existing,
+        format: format.toUpperCase() as Book['format'],
+        title,
+        author,
+        sourceTitle: title,
+        deletedAt: null,
+        updatedAt: now,
+      };
+      // Rebuild metadata wholesale so a server-side metadata edit propagates;
+      // a stub has no user-editable metadata of its own.
+      updated.metadata = buildCalibreBookMetadata(json, source);
+      hydrateCalibreBookFields(updated);
+      upserts.push(updated);
+    } else {
+      const filePath = makeCalibreFilePath(server.id, libraryId, id);
+      const stub: Book = {
+        hash: md5(filePath),
+        format: format.toUpperCase() as Book['format'],
+        filePath,
+        title: json.title || _('Untitled'),
+        author: json.authors?.join(', ') || '',
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      };
+      stub.sourceTitle = stub.title;
+      stub.metadata = buildCalibreBookMetadata(json, source);
+      hydrateCalibreBookFields(stub);
+      upserts.push(stub);
+    }
+  }
+
+  const tombstoneHashes: string[] = [];
+  for (const [key, book] of stubsBySource) {
+    if (!seenSources.has(key) && !book.deletedAt) {
+      tombstoneHashes.push(book.hash);
+    }
+  }
+
+  return { upserts, tombstoneHashes };
+};
+
+const toEnvConfig = (appService: AppService): { getAppService: () => Promise<AppService> } => ({
+  getAppService: async () => appService,
+});
+
+/**
+ * Download a stub's cover via the client's authenticated fetch (covers are
+ * small enough to skip the transfer manager, and the auth header then just
+ * works for digest servers too). Best effort: any failure is logged and the
+ * book keeps its placeholder tile. Mutates `book` in place — callers must run
+ * this before the upserts reach the library store (see syncAbsServer).
+ */
+const downloadCalibreCover = async (
+  appService: AppService,
+  client: ReturnType<typeof createCalibreClient>,
+  book: Book,
+  libraryId: string,
+  bookId: string,
+): Promise<boolean> => {
+  try {
+    const res = await client.authedFetch(client.buildThumbUrl(libraryId, bookId, '600x900'), {
+      headers: { Accept: 'image/*' },
+    });
+    if (!res.ok) return false;
+    const bytes = await res.arrayBuffer();
+    if (!bytes?.byteLength) return false;
+    await appService.writeFile(getCoverFilename(book), 'Books', bytes);
+    book.coverHash = await appService.computeCoverHash(book);
+    book.coverImageUrl = await appService.generateCoverImageUrl(book);
+    return true;
+  } catch (error) {
+    console.warn(`[Calibre] failed to download cover for "${book.title}":`, error);
+    return false;
+  }
+};
+
+/** Orchestrates: fetch, reconcile, apply to the library store, download missing covers. */
+export const syncCalibreServer = async (
+  appService: AppService,
+  server: CalibreServer,
+): Promise<void> => {
+  const client = createCalibreClient(server);
+
+  const info = await client.getLibraryInfo();
+  const availableIds = new Set(info.libraries.map((l) => l.id));
+  const libraryId =
+    server.libraryId && availableIds.has(server.libraryId)
+      ? server.libraryId
+      : info.defaultLibraryId;
+  const libraryName = info.libraries.find((l) => l.id === libraryId)?.name ?? libraryId;
+  if (libraryId !== server.libraryId || libraryName !== server.libraryName) {
+    useCalibreServerStore.getState().updateServer(server.id, { libraryId, libraryName });
+    server = { ...server, libraryId, libraryName };
+  }
+
+  const bookIds = await client.getAllBookIds(libraryId);
+  const serverBooks: CalibreServerBook[] = [];
+  for (let i = 0; i < bookIds.length; i += METADATA_BATCH_SIZE) {
+    const batch = bookIds.slice(i, i + METADATA_BATCH_SIZE);
+    const metadata = await client.getBooks(libraryId, batch);
+    for (const id of batch) {
+      const json = metadata[String(id)];
+      if (json) serverBooks.push({ id: String(id), json });
+    }
+  }
+
+  const now = Date.now();
+  const { library } = useLibraryStore.getState();
+  const { upserts, tombstoneHashes } = reconcileCalibreBooks({
+    server,
+    libraryId,
+    serverBooks,
+    library,
+    now,
+  });
+
+  // Covers before the upserts reach the store (in-place mutation is only safe
+  // while the Book objects aren't referenced by the library yet).
+  const missingCover: { book: Book; libraryId: string; bookId: string }[] = [];
+  for (const book of upserts) {
+    const parsed = parseCalibreFilePath(book.filePath);
+    if (!parsed) continue;
+    if (await appService.exists(getCoverFilename(book), 'Books')) continue;
+    missingCover.push({ book, libraryId: parsed.libraryId, bookId: parsed.bookId });
+  }
+  for (let i = 0; i < missingCover.length; i += COVER_CONCURRENCY) {
+    const group = missingCover.slice(i, i + COVER_CONCURRENCY);
+    await Promise.all(
+      group.map(({ book, libraryId: libId, bookId }) =>
+        downloadCalibreCover(appService, client, book, libId, bookId),
+      ),
+    );
+  }
+
+  const merged = new Map(library.map((book) => [book.hash, book]));
+  for (const book of upserts) merged.set(book.hash, book);
+  for (const hash of tombstoneHashes) {
+    const existing = merged.get(hash);
+    if (existing) merged.set(hash, { ...existing, deletedAt: now });
+  }
+  const newLibrary = Array.from(merged.values());
+
+  useLibraryStore.getState().setLibrary(newLibrary);
+  await appService.saveLibraryBooks(newLibrary);
+
+  useCalibreServerStore.getState().updateServer(server.id, { lastSyncedAt: now });
+  await useCalibreServerStore.getState().saveCalibreServers(toEnvConfig(appService));
+};
+
+export const syncAllCalibreServers = async (appService: AppService): Promise<void> => {
+  const servers = useCalibreServerStore
+    .getState()
+    .getAvailableServers()
+    .filter((s) => !s.disabled);
+  for (const server of servers) {
+    try {
+      await syncCalibreServer(appService, server);
+    } catch (error) {
+      console.error(`[Calibre] sync failed for server "${server.name}":`, error);
+      eventDispatcher.dispatch('toast', {
+        message: `Calibre sync failed for "${server.name}": ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        type: 'error',
+      });
+    }
+  }
+};
+
+/** Tombstone all sync stubs belonging to a removed server; downloaded copies stay. */
+export const removeCalibreServerBooks = async (
+  appService: AppService,
+  serverId: string,
+): Promise<void> => {
+  const now = Date.now();
+  const { library } = useLibraryStore.getState();
+  const newLibrary = library.map((book) => {
+    const parsed = parseCalibreFilePath(book.filePath);
+    if (parsed && parsed.serverId === serverId && !book.deletedAt) {
+      return { ...book, deletedAt: now };
+    }
+    return book;
+  });
+  useLibraryStore.getState().setLibrary(newLibrary);
+  await appService.saveLibraryBooks(newLibrary);
+};
