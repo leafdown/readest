@@ -26,6 +26,14 @@ describe('pickPreferredFormat', () => {
     expect(pickPreferredFormat(['kfx', 'docx', 'djvu'])).toBe('');
   });
 
+  it('never returns a format outside the BookFormat union', () => {
+    // Calibre reports these; EXTS has no entry for them, and an unknown
+    // format would break every EXTS[book.format] lookup downstream.
+    expect(pickPreferredFormat(['prc'])).toBe('');
+    expect(pickPreferredFormat(['kepub', 'rtf'])).toBe('');
+    expect(pickPreferredFormat(['kepub', 'epub'])).toBe('epub');
+  });
+
   it('handles empty and missing lists', () => {
     expect(pickPreferredFormat([])).toBe('');
     expect(pickPreferredFormat(undefined)).toBe('');

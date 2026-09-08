@@ -72,7 +72,7 @@ const CalibreForm: React.FC<CalibreFormProps> = ({ onBack }) => {
         libraryName: info.libraries.find((l) => l.id === info.defaultLibraryId)?.name,
       });
       void useCalibreServerStore.getState().saveCalibreServers(envConfig);
-      void eventDispatcher.dispatch('sync-calibre-servers', {});
+      void eventDispatcher.dispatch('sync-calibre-servers', { manual: true });
 
       setUrl('');
       setUsername('');
@@ -281,11 +281,11 @@ const CalibreServerDetail: React.FC<CalibreServerDetailProps> = ({
     persist();
     // Books of the previous library are tombstoned by the reconcile pass
     // (they are no longer in the seen set), so a plain re-sync switches shelves.
-    void eventDispatcher.dispatch('sync-calibre-servers', {});
+    void eventDispatcher.dispatch('sync-calibre-servers', { manual: true });
   };
 
   const handleSyncNow = () => {
-    void eventDispatcher.dispatch('sync-calibre-servers', {});
+    void eventDispatcher.dispatch('sync-calibre-servers', { manual: true });
   };
 
   const handleRemove = async () => {

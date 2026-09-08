@@ -1,6 +1,7 @@
 import type { BookMetadata, CalibreSourceInfo } from '@/libs/document';
 import type { CalibreBookJson } from '@/types/calibre';
 import type { Book } from '@/types/book';
+import { EXTS } from '@/libs/document';
 import { md5 } from '@/utils/md5';
 import { formatAuthors, formatTitle, getPrimaryLanguage } from '@/utils/book';
 
@@ -49,52 +50,27 @@ export const computeCalibreServerId = (url: string): string => {
   return md5(normalized);
 };
 
-/**
- * Formats Readest cannot open (mirrors UNSUPPORTED_FORMAT_TOKENS in
- * src/services/opds/formats.ts; calibre servers happily expose all of them).
- */
-const UNSUPPORTED_CALIBRE_FORMATS = new Set([
-  'kfx',
-  'azw4',
-  'azw8',
-  'lit',
-  'lrf',
-  'lrx',
-  'djvu',
-  'docx',
-  'htmlz',
-  'chm',
-  'acsm',
-  'ibooks',
-  'odt',
-  'rtf',
-  'snb',
-  'tcr',
-  'pml',
-  'zip',
-  'rar',
-  'tanu',
-  'mbp',
-]);
-
 // Best -> worst, mirroring getFormatTier's policy (EPUB > AZW3/MOBI/AZW >
-// PDF/CBZ > FB2 > TXT/MD > anything else we can name).
+// PDF/CBZ > FB2 > TXT/MD). Every entry must be an EXTS key; formats calibre
+// reports but Readest cannot open (kfx, docx, prc, kepub, ...) simply fall
+// outside this list, and the EXTS check below rejects anything unexpected.
 const FORMAT_PREFERENCE = ['epub', 'azw3', 'mobi', 'azw', 'pdf', 'cbz', 'fb2', 'fbz', 'txt', 'md'];
 
 /**
  * The format Readest would rather download from a calibre format list
- * (lowercase names from `formats`), or '' when the book has no supported
- * format at all.
+ * (lowercase names from `formats`), or '' when the book has no format
+ * Readest can open. The result is always a valid BookFormat: it is checked
+ * against the EXTS keys so the uppercase cast in reconcile can never mint an
+ * unknown format (whose EXTS lookup would be undefined).
  */
 export const pickPreferredFormat = (formats: string[] | undefined | null): string => {
   if (!formats?.length) return '';
-  const available = formats.map((f) => f.toLowerCase());
+  const available = new Set(formats.map((f) => f.toLowerCase()));
   for (const fmt of FORMAT_PREFERENCE) {
-    if (available.includes(fmt)) return fmt;
+    // EXTS guard keeps this correct if the preference list and EXTS drift.
+    if (available.has(fmt) && fmt.toUpperCase() in EXTS) return fmt;
   }
-  // Nothing in the preference list: fall back to the first format we cannot
-  // positively rule out, so an exotic library still yields a download target.
-  return available.find((f) => !UNSUPPORTED_CALIBRE_FORMATS.has(f)) ?? '';
+  return '';
 };
 
 /** True when `book` came from a Calibre server (stub or downloaded copy). */

@@ -264,7 +264,17 @@ export const syncCalibreServer = async (
   await useCalibreServerStore.getState().saveCalibreServers(toEnvConfig(appService));
 };
 
-export const syncAllCalibreServers = async (appService: AppService): Promise<void> => {
+/**
+ * Sync every enabled server. Fails silently by design (console only): the
+ * periodic 5-minute pass runs while the user reads, and an offline Docker
+ * box must not toast every interval — mirrors syncAllAbsServers. The
+ * settings form's explicit "Sync now" opts into failure toasts via
+ * `notifyOnFailure`.
+ */
+export const syncAllCalibreServers = async (
+  appService: AppService,
+  options: { notifyOnFailure?: boolean } = {},
+): Promise<void> => {
   const servers = useCalibreServerStore
     .getState()
     .getAvailableServers()
@@ -274,12 +284,14 @@ export const syncAllCalibreServers = async (appService: AppService): Promise<voi
       await syncCalibreServer(appService, server);
     } catch (error) {
       console.error(`[Calibre] sync failed for server "${server.name}":`, error);
-      eventDispatcher.dispatch('toast', {
-        message: `Calibre sync failed for "${server.name}": ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        type: 'error',
-      });
+      if (options.notifyOnFailure) {
+        eventDispatcher.dispatch('toast', {
+          message: `Calibre sync failed for "${server.name}": ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          type: 'error',
+        });
+      }
     }
   }
 };

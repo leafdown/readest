@@ -21,30 +21,37 @@ export function useCalibreSync() {
     await useCalibreServerStore.getState().loadCalibreServers();
   }, [envConfig]);
 
-  const checkCalibreServers = useCallback(async () => {
-    if (!appService) return;
-    if (isSyncingRef.current) return;
-    await ensureHydrated();
-    if (useCalibreServerStore.getState().getAvailableServers().length === 0) return;
+  const checkCalibreServers = useCallback(
+    async (notifyOnFailure = false) => {
+      if (!appService) return;
+      if (isSyncingRef.current) return;
+      await ensureHydrated();
+      if (useCalibreServerStore.getState().getAvailableServers().length === 0) return;
 
-    try {
-      isSyncingRef.current = true;
-      await syncAllCalibreServers(appService);
-    } catch (error) {
-      console.error('Calibre sync error:', error);
-    } finally {
-      isSyncingRef.current = false;
-    }
-  }, [appService, ensureHydrated]);
+      try {
+        isSyncingRef.current = true;
+        await syncAllCalibreServers(appService, { notifyOnFailure });
+      } catch (error) {
+        console.error('Calibre sync error:', error);
+      } finally {
+        isSyncingRef.current = false;
+      }
+    },
+    [appService, ensureHydrated],
+  );
 
   // Auto-trigger on startup once the app service is ready.
   useEffect(() => {
     checkCalibreServers();
   }, [checkCalibreServers]);
 
-  // Listen for explicit sync requests (settings form "Sync now" and after connect).
+  // Listen for explicit sync requests (settings form "Sync now" and after
+  // connect — flagged `manual` so failures toast — vs. the silent startup
+  // and periodic passes).
   useEffect(() => {
-    const handler = () => checkCalibreServers();
+    const handler = (event: CustomEvent) => {
+      void checkCalibreServers(!!event.detail?.manual);
+    };
     eventDispatcher.on('sync-calibre-servers', handler);
     return () => eventDispatcher.off('sync-calibre-servers', handler);
   }, [checkCalibreServers]);
