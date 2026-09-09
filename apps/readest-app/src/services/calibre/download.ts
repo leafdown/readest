@@ -20,6 +20,17 @@ interface DownloadCalibreBookOptions {
 const isNotFound = (error: unknown): boolean =>
   /\b404\b|not found/i.test(error instanceof Error ? error.message : String(error));
 
+export interface CalibreDownloadResult {
+  ok: boolean;
+  /**
+   * True when every attempted format answered 404: the server's database
+   * advertises the formats but the actual files are missing on the server
+   * (calibre-web's send_from_directory 404s exactly like that). Nothing a
+   * retry or a different format can fix — the book needs fixing server-side.
+   */
+  missingOnServer?: boolean;
+}
+
 /**
  * Download a Calibre book's file into its managed shelf directory
  * (`Books/<hash>/<title>.<ext>`) so the SAME library row that carried the
@@ -35,28 +46,28 @@ const isNotFound = (error: unknown): boolean =>
  * that actually downloaded, so the managed filename and EXTS lookups stay
  * consistent. Works for both stubs and previously downloaded copies whose
  * local file was deleted (identity via metadata.calibreSource).
- *
- * Returns true when the file is on disk (newly downloaded or already there).
  */
 export const downloadCalibreBook = async (
   appService: AppService,
   book: Book,
   options: DownloadCalibreBookOptions = {},
-): Promise<boolean> => {
+): Promise<CalibreDownloadResult> => {
   if (await appService.exists(getLocalBookFilename(book), 'Books')) {
     book.downloadedAt = book.downloadedAt ?? Date.now();
     book.filePath = undefined;
-    return true;
+    return { ok: true };
   }
   const identity = resolveCalibreIdentity(book);
-  if (!identity) return false;
+  if (!identity) return { ok: false };
   const server = findCalibreServerById(identity.serverId);
-  if (!server || server.deletedAt) return false;
+  if (!server || server.deletedAt) return { ok: false };
   const source = book.metadata?.calibreSource;
   const ladder = buildDownloadLadder(options.format ?? source?.format, source?.formats);
-  if (ladder.length === 0) return false;
+  if (ladder.length === 0) return { ok: false };
 
   const client = createCalibreClient(server);
+  let sawNotFound = false;
+  let sawOtherError = false;
   for (const [index, format] of ladder.entries()) {
     const url = client.buildDownloadUrl(identity.libraryId, identity.bookId, format);
     const headers: Record<string, string> = {
@@ -97,9 +108,14 @@ export const downloadCalibreBook = async (
       // file is in the managed shelf dir it would only misroute availability
       // checks, cloud sync, and reconcile. calibreSource keeps the identity.
       book.filePath = undefined;
-      return true;
+      return { ok: true };
     } catch (error) {
       const isLast = index === ladder.length - 1;
+      if (isNotFound(error)) {
+        sawNotFound = true;
+      } else {
+        sawOtherError = true;
+      }
       if (isLast || !isNotFound(error)) {
         const path = (() => {
           try {
@@ -109,7 +125,7 @@ export const downloadCalibreBook = async (
           }
         })();
         console.error(`[Calibre] download failed for "${book.title}": GET ${path}`, error);
-        return false;
+        return { ok: false, missingOnServer: sawNotFound && !sawOtherError };
       }
       // The advertised format isn't on the server; fall to the next one.
       console.warn(
@@ -123,5 +139,5 @@ export const downloadCalibreBook = async (
       }
     }
   }
-  return false;
+  return { ok: false, missingOnServer: sawNotFound && !sawOtherError };
 };
