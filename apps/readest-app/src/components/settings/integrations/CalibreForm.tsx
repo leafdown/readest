@@ -5,6 +5,7 @@ import { useEnv } from '@/context/EnvContext';
 import { type EnvConfigType } from '@/services/environment';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useCalibreServerStore } from '@/store/calibreServerStore';
+import { useCalibreSyncProgressStore } from '@/store/calibreSyncStore';
 import { CalibreClient, createCalibreClient } from '@/services/calibre/client';
 import { removeCalibreServerBooks } from '@/services/calibre/librarySync';
 import { computeCalibreServerId } from '@/utils/calibre';
@@ -32,6 +33,7 @@ const CalibreForm: React.FC<CalibreFormProps> = ({ onBack }) => {
   const _ = useTranslation();
   const { envConfig, appService } = useEnv();
   const servers = useCalibreServerStore((state) => state.servers).filter((s) => !s.deletedAt);
+  const progressByServer = useCalibreSyncProgressStore((s) => s.byServer);
   const [activeServerId, setActiveServerId] = useState<string | null>(null);
 
   const [url, setUrl] = useState('');
@@ -107,14 +109,29 @@ const CalibreForm: React.FC<CalibreFormProps> = ({ onBack }) => {
         <div className='space-y-5'>
           {servers.length > 0 && (
             <BoxedList title={_('Servers')}>
-              {servers.map((server) => (
-                <NavigationRow
-                  key={server.id}
-                  title={server.name}
-                  status={server.lastSyncedAt ? _('Synced') : _('Not connected')}
-                  onClick={() => setActiveServerId(server.id)}
-                />
-              ))}
+              {servers.map((server) => {
+                const p = progressByServer[server.id];
+                const status = p
+                  ? p.phase === 'covers'
+                    ? _('Downloading covers…')
+                    : p.total
+                      ? _('Syncing {{fetched}} / {{total}} books…', {
+                          fetched: p.fetched,
+                          total: p.total,
+                        })
+                      : _('Syncing… {{count}} books', { count: p.fetched })
+                  : server.lastSyncedAt
+                    ? _('Synced')
+                    : _('Not connected');
+                return (
+                  <NavigationRow
+                    key={server.id}
+                    title={server.name}
+                    status={status}
+                    onClick={() => setActiveServerId(server.id)}
+                  />
+                );
+              })}
             </BoxedList>
           )}
 
@@ -233,6 +250,9 @@ const CalibreServerDetail: React.FC<CalibreServerDetailProps> = ({
   const [libraries, setLibraries] = useState<CalibreLibraryInfo | null>(null);
   const [libError, setLibError] = useState('');
   const [isRemoving, setIsRemoving] = useState(false);
+  // Live sync progress (books pages, then covers), published by syncCalibreServer.
+  const progress = useCalibreSyncProgressStore((s) => s.byServer[server.id]);
+  const isSyncing = !!progress;
 
   useEffect(() => {
     setName(server.name);
@@ -349,6 +369,33 @@ const CalibreServerDetail: React.FC<CalibreServerDetailProps> = ({
         </p>
       </div>
 
+      {progress && (
+        <div className='space-y-1.5 px-4'>
+          <div className='bg-base-200 eink-bordered h-1.5 w-full overflow-hidden rounded-full'>
+            {progress.total ? (
+              <div
+                className='bg-primary h-full rounded-full transition-[width] duration-300'
+                style={{
+                  width: `${Math.min(100, (progress.fetched / progress.total) * 100)}%`,
+                }}
+              />
+            ) : (
+              <div className='bg-primary animate-pulse h-full w-2/5 rounded-full' />
+            )}
+          </div>
+          <p className='text-base-content/65 text-[0.85em]'>
+            {progress.phase === 'covers'
+              ? _('Downloading covers…')
+              : progress.total
+                ? _('Syncing {{fetched}} / {{total}} books…', {
+                    fetched: progress.fetched,
+                    total: progress.total,
+                  })
+                : _('Syncing… {{count}} books', { count: progress.fetched })}
+          </p>
+        </div>
+      )}
+
       <div className='space-y-2'>
         <SectionTitle>{_('Library to Sync')}</SectionTitle>
         {libError ? (
@@ -379,10 +426,15 @@ const CalibreServerDetail: React.FC<CalibreServerDetailProps> = ({
         <button
           type='button'
           onClick={handleSyncNow}
-          className='btn btn-ghost btn-sm h-9 min-h-9 gap-1.5'
+          disabled={isSyncing}
+          className={clsx('btn btn-ghost btn-sm h-9 min-h-9 gap-1.5', isSyncing && 'opacity-60')}
         >
-          <MdCloudSync className='h-4 w-4' />
-          {_('Sync Now')}
+          {isSyncing ? (
+            <span className='loading loading-spinner loading-sm' />
+          ) : (
+            <MdCloudSync className='h-4 w-4' />
+          )}
+          {isSyncing ? _('Syncing…') : _('Sync Now')}
         </button>
         <button
           type='button'

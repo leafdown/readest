@@ -286,11 +286,16 @@ export class CalibreClient {
    * Every book in the library with metadata. Official servers go through the
    * /ajax search + batch metadata API; Calibre-Web has no batch JSON API, so
    * the OPDS acquisition feed is walked page by page (each entry already
-   * carries full metadata).
+   * carries full metadata). `onProgress` reports books fetched so far and —
+   * when the server exposes a count — the total.
    */
-  async listAllBooks(libraryId: string): Promise<CalibreServerBook[]> {
-    if (this.flavor === 'calibre-web') return this.listCalibreWebBooks();
+  async listAllBooks(
+    libraryId: string,
+    onProgress?: (fetched: number, total?: number) => void,
+  ): Promise<CalibreServerBook[]> {
+    if (this.flavor === 'calibre-web') return this.listCalibreWebBooks(onProgress);
     const bookIds = await this.getAllBookIds(libraryId);
+    onProgress?.(0, bookIds.length);
     const serverBooks: CalibreServerBook[] = [];
     for (let i = 0; i < bookIds.length; i += METADATA_BATCH_SIZE) {
       const batch = bookIds.slice(i, i + METADATA_BATCH_SIZE);
@@ -299,6 +304,9 @@ export class CalibreClient {
         const json = metadata[String(id)];
         if (json) serverBooks.push({ id: String(id), json });
       }
+      // Progress tracks processed books; restricted books (null metadata)
+      // still count as processed.
+      onProgress?.(Math.min(i + METADATA_BATCH_SIZE, bookIds.length), bookIds.length);
     }
     return serverBooks;
   }
@@ -307,9 +315,20 @@ export class CalibreClient {
    * Walk Calibre-Web's "all books" OPDS feed (/opds/books/letter/00 serves
    * every book regardless of the letter filter) following the server's own
    * rel="next" links — calibre-web derives the page index from the offset,
-   * so only its computed hrefs are safe to request.
+   * so only its computed hrefs are safe to request. The total comes from
+   * /opds/stats when available; the feed itself carries no count.
    */
-  private async listCalibreWebBooks(): Promise<CalibreServerBook[]> {
+  private async listCalibreWebBooks(
+    onProgress?: (fetched: number, total?: number) => void,
+  ): Promise<CalibreServerBook[]> {
+    let total: number | undefined;
+    try {
+      const stats = await this.fetchJSON<{ books?: number }>('/opds/stats');
+      if (typeof stats.books === 'number' && stats.books > 0) total = stats.books;
+    } catch {
+      // Stats are optional; the walk reports fetched counts regardless.
+    }
+    onProgress?.(0, total);
     const books: CalibreServerBook[] = [];
     let href: string | undefined = '/opds/books/letter/00';
     const seen = new Set<string>();
@@ -338,6 +357,7 @@ export class CalibreClient {
         throw new Error(`${message} (while reading ${href})`);
       }
       books.push(...feed.entries);
+      onProgress?.(books.length, total);
       href = feed.nextHref;
     }
     return books;

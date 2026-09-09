@@ -229,7 +229,7 @@ export const useBookTransferActions = (
           // Cloud mirrors can't serve it — the calibre server still can.
           if (isCalibre && !calibreTried) {
             calibreTried = true;
-            return await tryCalibreDownload();
+            return (await tryCalibreDownload()).ok;
           }
           if (!silent) {
             eventDispatcher.dispatch('toast', {
@@ -262,7 +262,7 @@ export const useBookTransferActions = (
           tracker.done();
           if (isCalibre && !calibreTried && appService) {
             calibreTried = true;
-            return await tryCalibreDownload();
+            return (await tryCalibreDownload()).ok;
           }
           if (!silent) {
             eventDispatcher.dispatch('toast', {

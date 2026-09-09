@@ -14,6 +14,7 @@ import { md5 } from '@/utils/md5';
 import { stubTranslation as _ } from '@/utils/misc';
 import { eventDispatcher } from '@/utils/event';
 import { useCalibreServerStore } from '@/store/calibreServerStore';
+import { useCalibreSyncProgressStore } from '@/store/calibreSyncStore';
 import { useLibraryStore } from '@/store/libraryStore';
 
 /** Parallel cover downloads during a sync pass. */
@@ -186,7 +187,24 @@ export const syncCalibreServer = async (
   server: CalibreServer,
 ): Promise<void> => {
   const client = createCalibreClient(server);
+  const progress = useCalibreSyncProgressStore.getState();
+  progress.begin(server.id);
 
+  try {
+    await syncCalibreServerInner(appService, server, client, progress);
+    progress.finish(server.id);
+  } catch (error) {
+    progress.finish(server.id);
+    throw error;
+  }
+};
+
+const syncCalibreServerInner = async (
+  appService: AppService,
+  server: CalibreServer,
+  client: ReturnType<typeof createCalibreClient>,
+  progress: ReturnType<typeof useCalibreSyncProgressStore.getState>,
+): Promise<void> => {
   const info = await client.getLibraryInfo();
   // Persist a newly-detected flavor (rows from before detection have none).
   if (info.flavor !== server.flavor) {
@@ -211,7 +229,9 @@ export const syncCalibreServer = async (
     server = { ...server, libraryId, libraryName };
   }
 
-  const serverBooks = await client.listAllBooks(libraryId);
+  const serverBooks = await client.listAllBooks(libraryId, (fetched, total) =>
+    progress.update(server.id, { fetched, total }),
+  );
 
   const now = Date.now();
   const { library } = useLibraryStore.getState();
@@ -247,6 +267,11 @@ export const syncCalibreServer = async (
   }
   for (let i = 0; i < coverTasks.length; i += COVER_CONCURRENCY) {
     const group = coverTasks.slice(i, i + COVER_CONCURRENCY);
+    progress.update(server.id, {
+      phase: 'covers',
+      fetched: Math.min(i + group.length, coverTasks.length),
+      total: coverTasks.length,
+    });
     await Promise.all(
       group.map(({ book, libraryId: libId, bookId }) =>
         downloadCalibreCover(appService, client, book, libId, bookId),
