@@ -72,12 +72,18 @@ const reconcile = (serverBooks: CalibreServerBook[], library: Book[]) =>
 
 describe('reconcileCalibreBooks', () => {
   it('creates stubs for new server books', () => {
-    const { upserts, tombstoneHashes } = reconcile([serverBook('1')], []);
+    const { upserts, tombstoneHashes } = reconcile(
+      [serverBook('1', { tags: ['Fantasy', 'Classic'] })],
+      [],
+    );
     expect(tombstoneHashes).toEqual([]);
     expect(upserts).toHaveLength(1);
     expect(upserts[0]!.hash).toBe(md5(makeCalibreFilePath('srv1', 'lib', '1')));
     expect(upserts[0]!.format).toBe('EPUB');
     expect(upserts[0]!.title).toBe('Book 1');
+    // Top-level tags drive the shelf's Tag grouping.
+    expect(upserts[0]!.tags).toEqual(['Fantasy', 'Classic']);
+    expect(upserts[0]!.metadata?.subject).toEqual(['Fantasy', 'Classic']);
     expect(upserts[0]!.metadata?.calibreSource).toMatchObject({
       serverId: 'srv1',
       libraryId: 'lib',

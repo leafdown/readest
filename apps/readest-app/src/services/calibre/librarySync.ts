@@ -89,12 +89,16 @@ export const reconcileCalibreBooks = (input: {
       const keepMetadata = !!existing.metadataUpdatedAt;
       const title = keepMetadata ? existing.title : json.title || existing.title;
       const author = keepMetadata ? existing.author : json.authors?.join(', ') || existing.author;
+      const tags = json.tags ?? [];
       const changed =
         existing.format !== format.toUpperCase() ||
         existing.metadata?.calibreSource?.lastModified !== source.lastModified ||
         // Rows synced before calibreSource.formats existed get a one-time
         // refresh so their download ladder has the fallback list.
         (existing.metadata?.calibreSource?.formats?.join(',') ?? '') !== formats.join(',') ||
+        // Top-level tags feed the shelf's Tag grouping; backfill rows that
+        // predate it the same way.
+        (existing.tags?.join(',') ?? '') !== tags.join(',') ||
         (!keepMetadata && (existing.title !== title || existing.author !== author)) ||
         (existing.deletedAt ?? null) !== null;
       if (!changed) continue;
@@ -103,6 +107,7 @@ export const reconcileCalibreBooks = (input: {
         format: format.toUpperCase() as Book['format'],
         title,
         author,
+        tags,
         sourceTitle: keepMetadata ? existing.sourceTitle : title,
         deletedAt: null,
         updatedAt: now,
@@ -125,6 +130,7 @@ export const reconcileCalibreBooks = (input: {
         filePath,
         title: json.title || _('Untitled'),
         author: json.authors?.join(', ') || '',
+        tags: json.tags ?? [],
         createdAt: now,
         updatedAt: now,
         deletedAt: null,
