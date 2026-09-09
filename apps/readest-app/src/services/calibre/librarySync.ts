@@ -69,11 +69,13 @@ export const reconcileCalibreBooks = (input: {
 
     const format = pickPreferredFormat(json.formats);
     if (!format) continue; // nothing Readest can open; don't clutter the shelf
+    const formats = Array.from(new Set((json.formats ?? []).map((f) => f.toLowerCase())));
     const source = {
       serverId: server.id,
       libraryId,
       bookId: id,
       format,
+      formats,
       lastModified: json.last_modified ?? undefined,
     };
 
@@ -89,6 +91,9 @@ export const reconcileCalibreBooks = (input: {
       const changed =
         existing.format !== format.toUpperCase() ||
         existing.metadata?.calibreSource?.lastModified !== source.lastModified ||
+        // Rows synced before calibreSource.formats existed get a one-time
+        // refresh so their download ladder has the fallback list.
+        (existing.metadata?.calibreSource?.formats?.join(',') ?? '') !== formats.join(',') ||
         (!keepMetadata && (existing.title !== title || existing.author !== author)) ||
         (existing.deletedAt ?? null) !== null;
       if (!changed) continue;

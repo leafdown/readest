@@ -80,6 +80,12 @@ export interface CalibreSourceInfo {
   bookId: string;
   /** The format this row's download prefers (may change on re-sync). */
   format: string;
+  /**
+   * Every format the server advertised for the book, lowercase. The download
+   * walks this as a fallback ladder: a 404 on the preferred format (server
+   * file missing, OPDS advertising stale data) drops to the next best one.
+   */
+  formats?: string[];
   /** Server `last_modified`, to skip unchanged metadata on re-sync. */
   lastModified?: string;
 }

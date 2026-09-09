@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildDownloadLadder,
   computeCalibreServerId,
   isCalibreBook,
   isCalibreStub,
@@ -8,6 +9,30 @@ import {
   pickPreferredFormat,
   resolveCalibreIdentity,
 } from '@/utils/calibre';
+
+describe('buildDownloadLadder', () => {
+  it('orders the preferred format first, then the rest in preference order', () => {
+    expect(buildDownloadLadder('pdf', ['pdf', 'mobi', 'epub', 'kfx'])).toEqual([
+      'pdf',
+      'epub',
+      'mobi',
+    ]);
+  });
+
+  it('drops formats Readest cannot open and dedupes', () => {
+    expect(buildDownloadLadder('epub', ['epub', 'epub', 'prc', 'kepub'])).toEqual(['epub']);
+  });
+
+  it('keeps the preferred head even when the list is missing or inconsistent', () => {
+    expect(buildDownloadLadder('epub', undefined)).toEqual(['epub']);
+    expect(buildDownloadLadder('epub', ['mobi'])).toEqual(['epub', 'mobi']);
+  });
+
+  it('falls back to the list when there is no preferred format', () => {
+    expect(buildDownloadLadder(undefined, ['pdf', 'epub'])).toEqual(['epub', 'pdf']);
+    expect(buildDownloadLadder(undefined, undefined)).toEqual([]);
+  });
+});
 
 describe('pickPreferredFormat', () => {
   it('prefers EPUB over everything', () => {

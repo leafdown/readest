@@ -38,6 +38,7 @@ const stub = (id: string, libraryId = 'lib'): Book => {
         libraryId,
         bookId: id,
         format: 'epub',
+        formats: ['epub', 'mobi'],
         lastModified: '2026-01-01T00:00:00+00:00',
       },
     },
@@ -82,6 +83,7 @@ describe('reconcileCalibreBooks', () => {
       libraryId: 'lib',
       bookId: '1',
       format: 'epub',
+      formats: ['epub', 'mobi'],
     });
   });
 

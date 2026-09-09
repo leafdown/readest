@@ -101,6 +101,34 @@ export const resolveCalibreIdentity = (
 };
 
 /**
+ * The download format ladder: the preferred format first, then the rest of
+ * the server-advertised formats in Readest's preference order (not the
+ * server's listing order). Entries that aren't valid BookFormats are dropped
+ * (pickPreferredFormat([f]) === f is the whitelist check). The preferred
+ * entry stays even when the list is missing or doesn't contain it —
+ * pre-formats rows keep their old behavior.
+ */
+export const buildDownloadLadder = (
+  preferred: string | undefined,
+  available: string[] | undefined,
+): string[] => {
+  const head = preferred?.toLowerCase() ?? '';
+  const rest: string[] = [];
+  for (const f of available ?? []) {
+    const fmt = f.toLowerCase();
+    if (fmt && fmt !== head && !rest.includes(fmt) && pickPreferredFormat([fmt]) === fmt) {
+      rest.push(fmt);
+    }
+  }
+  const rank = (fmt: string) => {
+    const index = FORMAT_PREFERENCE.indexOf(fmt);
+    return index === -1 ? FORMAT_PREFERENCE.length : index;
+  };
+  rest.sort((a, b) => rank(a) - rank(b));
+  return head ? [head, ...rest] : rest;
+};
+
+/**
  * Build the `metadata` payload a Calibre book syncs with. Mirrors
  * buildAbsBookMetadata (src/utils/audiobook.ts): identity fields with no
  * cloud `books` column ride inside `metadata`, which does sync.
