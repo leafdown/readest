@@ -42,8 +42,14 @@ export const reconcileCalibreBooks = (input: {
   serverBooks: CalibreServerBook[];
   library: Book[];
   now: number;
+  /**
+   * Calibre-Web shelves, as bookId → shelf name. Backfill-only: a book's
+   * groupName is set once and never overwritten, so the user's own manual
+   * folder grouping always wins over server shelves.
+   */
+  getGroupName?: (bookId: string) => string | undefined;
 }): { upserts: Book[]; tombstoneHashes: string[] } => {
-  const { server, libraryId, serverBooks, library, now } = input;
+  const { server, libraryId, serverBooks, library, now, getGroupName } = input;
 
   // Books of THIS server only: stubs by filePath, downloaded by metadata.
   const stubsBySource = new Map<string, Book>();
@@ -90,6 +96,9 @@ export const reconcileCalibreBooks = (input: {
       const title = keepMetadata ? existing.title : json.title || existing.title;
       const author = keepMetadata ? existing.author : json.authors?.join(', ') || existing.author;
       const tags = json.tags ?? [];
+      // Shelves are backfill-only (see the input doc); a manually chosen
+      // groupName is never replaced by a server shelf.
+      const nextGroupName = existing.groupName || getGroupName?.(id) || '';
       const changed =
         existing.format !== format.toUpperCase() ||
         existing.metadata?.calibreSource?.lastModified !== source.lastModified ||
@@ -99,6 +108,7 @@ export const reconcileCalibreBooks = (input: {
         // Top-level tags feed the shelf's Tag grouping; backfill rows that
         // predate it the same way.
         (existing.tags?.join(',') ?? '') !== tags.join(',') ||
+        (existing.groupName ?? '') !== nextGroupName ||
         (!keepMetadata && (existing.title !== title || existing.author !== author)) ||
         (existing.deletedAt ?? null) !== null;
       if (!changed) continue;
@@ -108,6 +118,7 @@ export const reconcileCalibreBooks = (input: {
         title,
         author,
         tags,
+        groupName: nextGroupName,
         sourceTitle: keepMetadata ? existing.sourceTitle : title,
         deletedAt: null,
         updatedAt: now,
@@ -131,6 +142,7 @@ export const reconcileCalibreBooks = (input: {
         title: json.title || _('Untitled'),
         author: json.authors?.join(', ') || '',
         tags: json.tags ?? [],
+        groupName: getGroupName?.(id),
         createdAt: now,
         updatedAt: now,
         deletedAt: null,
@@ -269,6 +281,25 @@ const syncCalibreServerInner = async (
     progress.update(server.id, { fetched, total }),
   );
 
+  // Calibre-Web shelves → folder grouping. Fetched on every full pass (they
+  // now only run when the book count changed or the user asked); a failure
+  // must not fail the whole sync.
+  let getGroupName: ((bookId: string) => string | undefined) | undefined;
+  if (info.flavor === 'calibre-web') {
+    try {
+      const shelves = await client.getShelves();
+      const shelfOf = new Map<string, string>();
+      for (const shelf of shelves) {
+        for (const bookId of shelf.bookIds) {
+          if (!shelfOf.has(bookId)) shelfOf.set(bookId, shelf.name);
+        }
+      }
+      if (shelfOf.size > 0) getGroupName = (bookId) => shelfOf.get(bookId);
+    } catch (error) {
+      console.warn('[Calibre] shelf sync failed:', error);
+    }
+  }
+
   const now = Date.now();
   const { library } = useLibraryStore.getState();
   const { upserts, tombstoneHashes } = reconcileCalibreBooks({
@@ -277,6 +308,7 @@ const syncCalibreServerInner = async (
     serverBooks,
     library,
     now,
+    getGroupName,
   });
 
   // Covers before the upserts reach the store. New/changed stubs are not

@@ -23,6 +23,7 @@ export const LibrarySortByType = {
   Published: 'published',
   Progress: 'progress',
   TimeRemaining: 'timeRemaining',
+  Rating: 'rating',
 } as const;
 
 export type LibrarySortByType = (typeof LibrarySortByType)[keyof typeof LibrarySortByType];
@@ -46,6 +47,7 @@ export const LibraryGroupByType = {
   Tag: 'tag',
   Subject: 'subject',
   Status: 'status',
+  Year: 'year',
 } as const;
 
 export type LibraryGroupByType = (typeof LibraryGroupByType)[keyof typeof LibraryGroupByType];

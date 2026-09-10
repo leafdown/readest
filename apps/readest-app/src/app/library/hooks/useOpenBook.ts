@@ -14,7 +14,7 @@ interface UseOpenBookOptions {
   setLoading: Dispatch<SetStateAction<boolean>>;
   handleBookDownload: (
     book: Book,
-    options?: { redownload?: boolean; queued?: boolean },
+    options?: { redownload?: boolean; queued?: boolean; format?: string },
   ) => Promise<boolean>;
 }
 

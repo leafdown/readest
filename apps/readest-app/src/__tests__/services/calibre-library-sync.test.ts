@@ -73,7 +73,7 @@ const reconcile = (serverBooks: CalibreServerBook[], library: Book[]) =>
 describe('reconcileCalibreBooks', () => {
   it('creates stubs for new server books', () => {
     const { upserts, tombstoneHashes } = reconcile(
-      [serverBook('1', { tags: ['Fantasy', 'Classic'] })],
+      [serverBook('1', { tags: ['Fantasy', 'Classic'], rating: 4 })],
       [],
     );
     expect(tombstoneHashes).toEqual([]);
@@ -84,6 +84,7 @@ describe('reconcileCalibreBooks', () => {
     // Top-level tags drive the shelf's Tag grouping.
     expect(upserts[0]!.tags).toEqual(['Fantasy', 'Classic']);
     expect(upserts[0]!.metadata?.subject).toEqual(['Fantasy', 'Classic']);
+    expect(upserts[0]!.metadata?.rating).toBe(4);
     expect(upserts[0]!.metadata?.calibreSource).toMatchObject({
       serverId: 'srv1',
       libraryId: 'lib',
@@ -91,6 +92,32 @@ describe('reconcileCalibreBooks', () => {
       format: 'epub',
       formats: ['epub', 'mobi'],
     });
+  });
+
+  it('backfills calibre-web shelf names as groupName without clobbering manual groups', () => {
+    const serverBooks = [
+      serverBook('1', { tags: ['Fantasy'] }),
+      serverBook('2', { tags: ['Fantasy'] }),
+    ];
+    const getGroupName = () => 'Favorites';
+
+    // New stubs take the shelf name; a stub the user already grouped keeps
+    // its manual groupName (the upsert it does get is the one-time tags
+    // backfill, and it must not carry the shelf name).
+    const preGrouped = stub('2');
+    preGrouped.groupName = 'My Manual Group';
+    const { upserts } = reconcileCalibreBooks({
+      server: { id: 'srv1' },
+      libraryId: 'lib',
+      serverBooks,
+      library: [preGrouped],
+      now: NOW,
+      getGroupName,
+    });
+    expect(upserts).toHaveLength(2);
+    const byId = new Map(upserts.map((u) => [u.metadata!.calibreSource!.bookId, u]));
+    expect(byId.get('1')!.groupName).toBe('Favorites');
+    expect(byId.get('2')!.groupName).toBe('My Manual Group');
   });
 
   it('is idempotent when nothing changed', () => {

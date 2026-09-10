@@ -30,6 +30,9 @@ interface BookDownloadOptions {
   // toast for the whole batch instead of one per book — a group can hold
   // hundreds.
   silent?: boolean;
+  // Calibre books: download a specific format instead of the row's preferred
+  // one (the "Download <FORMAT>" context-menu items).
+  format?: string;
 }
 
 /**
@@ -152,6 +155,7 @@ export const useBookTransferActions = (
         try {
           const result = await downloadCalibreBook(appService, book, {
             onProgress: tracker.onProgress,
+            format: downloadOptions.format,
           });
           tracker.done();
           if (result.ok) {

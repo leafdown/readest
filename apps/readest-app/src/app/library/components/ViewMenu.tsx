@@ -71,6 +71,7 @@ const ViewMenu: React.FC<ViewMenuProps> = ({ setIsDropdownOpen }) => {
     { label: _('Tags'), value: LibraryGroupByType.Tag },
     { label: _('Subjects'), value: LibraryGroupByType.Subject },
     { label: _('Status'), value: LibraryGroupByType.Status },
+    { label: _('Year'), value: LibraryGroupByType.Year },
   ];
 
   const sortByOptions = [
@@ -83,6 +84,7 @@ const ViewMenu: React.FC<ViewMenuProps> = ({ setIsDropdownOpen }) => {
     { label: _('Date Published'), value: LibrarySortByType.Published },
     { label: _('Progress Read'), value: LibrarySortByType.Progress },
     { label: _('Time Remaining'), value: LibrarySortByType.TimeRemaining },
+    { label: _('Rating'), value: LibrarySortByType.Rating },
   ];
 
   const thenSortByOptions: { label: string; value: LibrarySecondarySortByType }[] = [

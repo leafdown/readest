@@ -12,6 +12,7 @@ import { openExternalUrl } from '@/utils/open';
 import { getBookGoodreadsQuery, getGoodreadsSearchUrl } from '@/utils/goodreads';
 import { getOSPlatform } from '@/utils/misc';
 import { throttle } from '@/utils/throttle';
+import { buildDownloadLadder, isCalibreBook } from '@/utils/calibre';
 import { LibraryCoverFitType, LibraryViewModeType } from '@/types/settings';
 import { BOOK_UNGROUPED_ID, BOOK_UNGROUPED_NAME } from '@/services/constants';
 import { FILE_REVEAL_LABELS, FILE_REVEAL_PLATFORMS } from '@/utils/os';
@@ -156,7 +157,7 @@ interface BookshelfItemProps {
   handleGroupBooks: () => void;
   handleBookDownload: (
     book: Book,
-    options?: { redownload?: boolean; queued?: boolean },
+    options?: { redownload?: boolean; queued?: boolean; format?: string },
   ) => Promise<boolean>;
   handleBookUpload: (book: Book, syncBooks?: boolean) => Promise<boolean>;
   handleBookDelete: (book: Book, syncBooks?: boolean) => Promise<boolean>;
@@ -321,9 +322,27 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
         },
       },
     };
-    return getBookContextMenuItemIds(book, {
+    const items = getBookContextMenuItemIds(book, {
       localSend: isTauriAppPlatform() && isLocalSendEnabled(),
     }).map((id) => itemOptions[id]);
+
+    // Calibre books carry every format the server advertises — offer each one
+    // right after the standard download item ("Download EPUB", "Download
+    // MOBI", ...). The ladder still falls back through formats on a 404.
+    const formats = isCalibreBook(book) ? (book.metadata?.calibreSource?.formats ?? []) : [];
+    if (formats.length > 0) {
+      const downloadIndex = items.indexOf(itemOptions['download']);
+      if (downloadIndex >= 0) {
+        const formatItems = buildDownloadLadder(undefined, formats).map((fmt) => ({
+          text: _('Download {{format}}', { format: fmt.toUpperCase() }),
+          action: async () => {
+            handleBookDownload(book, { queued: true, format: fmt });
+          },
+        }));
+        items.splice(downloadIndex + 1, 0, ...formatItems);
+      }
+    }
+    return items;
   };
 
   const buildGroupMenuItems = (group: BooksGroup): BookContextMenuItem[] => {

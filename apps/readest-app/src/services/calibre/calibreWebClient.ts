@@ -183,3 +183,49 @@ export const parseCalibreWebFeed = (xml: string): CalibreWebFeed => {
 
   return { entries, nextHref };
 };
+
+export interface CalibreWebNavEntry {
+  /** First capture group of `hrefPattern` applied to the entry's link. */
+  id: string;
+  title: string;
+  href: string;
+}
+
+/**
+ * Extract navigation entries from a Calibre-Web nav feed (e.g.
+ * /opds/shelfindex): entries whose subsection href matches `hrefPattern`.
+ * Calibre-Web renders nav entries with the target URL as both <id> and the
+ * subsection link, so the href is the only reliable identifier carrier.
+ */
+export const parseCalibreWebNav = (
+  xml: string,
+  hrefPattern: RegExp,
+): { links: CalibreWebNavEntry[]; nextHref?: string } => {
+  const doc = parseFeedDocument(xml);
+  const root =
+    doc.documentElement?.localName === 'feed' ? doc.documentElement : elementsNamed(doc, 'feed')[0];
+  if (!root) {
+    throw new Error(
+      'Calibre-Web OPDS feed not found. Enable OPDS and basic authentication on the server.',
+    );
+  }
+
+  const nextHref =
+    elementsNamed(root, 'link')
+      .find((link) => link.getAttribute('rel') === 'next')
+      ?.getAttribute('href') ?? undefined;
+
+  const links: CalibreWebNavEntry[] = [];
+  for (const entry of elementsNamed(root, 'entry')) {
+    const link = elementsNamed(entry, 'link').find((l) =>
+      hrefPattern.test(l.getAttribute('href') ?? ''),
+    );
+    const href = link?.getAttribute('href');
+    if (!href) continue;
+    const match = href.match(hrefPattern);
+    if (!match?.[1]) continue;
+    links.push({ id: match[1], title: textOf(entry, 'title'), href });
+  }
+
+  return { links, nextHref };
+};

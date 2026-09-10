@@ -113,6 +113,9 @@ export type BookMetadata = {
   seriesIndex?: number;
   seriesTotal?: number;
 
+  /** 0–5, as calibre stores it (the 0–10 database value halved). */
+  rating?: number;
+
   coverImageFile?: string;
   coverImageUrl?: string;
   coverImageBlobUrl?: string;

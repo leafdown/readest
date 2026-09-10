@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import { parseCalibreWebFeed } from '@/services/calibre/calibreWebClient';
+import { parseCalibreWebFeed, parseCalibreWebNav } from '@/services/calibre/calibreWebClient';
 
 // Shaped after cps/templates/feed.xml of Calibre-Web.
 const FEED = `<?xml version="1.0" encoding="UTF-8"?>
@@ -141,5 +141,34 @@ describe('parseCalibreWebFeed', () => {
     const { entries } = parseCalibreWebFeed(unknownEntity);
     expect(entries).toHaveLength(1);
     expect(entries[0]!.json.title).toBe('Weird &foo; Title');
+  });
+
+  it('extracts shelf nav entries by href pattern', () => {
+    const shelfIndex = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>urn:uuid:shelfindex</id>
+  <link rel="next" href="/opds/shelfindex?offset=50"/>
+  <entry>
+    <title>Favorites</title>
+    <id>/opds/shelf/7</id>
+    <link rel="subsection" type="application/atom+xml;profile=opds-catalog" href="/opds/shelf/7"/>
+  </entry>
+  <entry>
+    <title>To Read</title>
+    <id>/opds/shelf/9</id>
+    <link rel="subsection" type="application/atom+xml;profile=opds-catalog" href="/opds/shelf/9"/>
+  </entry>
+  <entry>
+    <title>New Books</title>
+    <id>/opds/new</id>
+    <link rel="subsection" type="application/atom+xml;profile=opds-catalog" href="/opds/new"/>
+  </entry>
+</feed>`;
+    const { links, nextHref } = parseCalibreWebNav(shelfIndex, /\/opds\/shelf\/(\d+)/);
+    expect(links).toEqual([
+      { id: '7', title: 'Favorites', href: '/opds/shelf/7' },
+      { id: '9', title: 'To Read', href: '/opds/shelf/9' },
+    ]);
+    expect(nextHref).toBe('/opds/shelfindex?offset=50');
   });
 });

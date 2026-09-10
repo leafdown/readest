@@ -146,6 +146,7 @@ export const buildCalibreBookMetadata = (
   if (serverBook.pubdate) metadata.published = serverBook.pubdate;
   if (serverBook.comments) metadata.description = serverBook.comments;
   if (serverBook.tags?.length) metadata.subject = serverBook.tags;
+  if (serverBook.rating) metadata.rating = serverBook.rating;
   if (serverBook.series) {
     metadata.series = serverBook.series;
     if (typeof serverBook.series_index === 'number') {

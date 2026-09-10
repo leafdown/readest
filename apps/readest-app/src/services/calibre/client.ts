@@ -9,12 +9,13 @@ import type {
 import { isTauriAppPlatform } from '@/services/environment';
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
 import { fetchWithAuth, needsProxy, probeAuth } from '@/app/opds/utils/opdsReq';
-import { parseCalibreWebFeed } from '@/services/calibre/calibreWebClient';
+import { parseCalibreWebFeed, parseCalibreWebNav } from '@/services/calibre/calibreWebClient';
 import type { CalibreServerBook } from '@/services/calibre/librarySync';
 
 /** Safety cap for the Calibre-Web OPDS page walk (per page ~20-60 books). */
 const MAX_FEED_PAGES = 2000;
-
+/** Safety cap for the shelf walk. */
+const MAX_SHELVES = 200;
 /** Metadata batch size for GET /ajax/books?ids=... (URL length safety). */
 const METADATA_BATCH_SIZE = 50;
 
@@ -280,6 +281,49 @@ export class CalibreClient {
       return this.buildUrl(`/opds/download/${bookId}/${fmt.toLowerCase()}/`);
     }
     return this.buildUrl(`/get/${fmt.toLowerCase()}/${bookId}/${CalibreClient.libSeg(libraryId)}`);
+  }
+
+  /**
+   * Calibre-Web user/public shelves (/opds/shelfindex → /opds/shelf/<id>),
+   * as name + contained book ids. Only available in the calibre-web flavor;
+   * official servers have no shelf concept over HTTP.
+   */
+  async getShelves(): Promise<{ name: string; bookIds: string[] }[]> {
+    if (this.flavor !== 'calibre-web') return [];
+    const shelves: { name: string; href: string }[] = [];
+    let indexHref: string | undefined = '/opds/shelfindex';
+    const seenIndex = new Set<string>();
+    for (let page = 0; indexHref && page < MAX_FEED_PAGES; page++) {
+      if (seenIndex.has(indexHref)) break;
+      seenIndex.add(indexHref);
+      const res = await this.authedFetch(this.buildUrl(indexHref), {
+        headers: { Accept: 'application/atom+xml' },
+      });
+      if (!res.ok || (res.headers.get('content-type') ?? '').includes('text/html')) break;
+      const nav = parseCalibreWebNav(await res.text(), /\/opds\/shelf\/(\d+)/);
+      shelves.push(...nav.links.map((link) => ({ name: link.title, href: link.href })));
+      indexHref = nav.nextHref;
+    }
+
+    const result: { name: string; bookIds: string[] }[] = [];
+    for (const shelf of shelves.slice(0, MAX_SHELVES)) {
+      let href: string | undefined = shelf.href;
+      const seen = new Set<string>();
+      const bookIds: string[] = [];
+      for (let page = 0; href && page < MAX_FEED_PAGES; page++) {
+        if (seen.has(href)) break;
+        seen.add(href);
+        const res = await this.authedFetch(this.buildUrl(href), {
+          headers: { Accept: 'application/atom+xml' },
+        });
+        if (!res.ok || (res.headers.get('content-type') ?? '').includes('text/html')) break;
+        const feed = parseCalibreWebFeed(await res.text());
+        bookIds.push(...feed.entries.map((entry) => entry.id));
+        href = feed.nextHref;
+      }
+      if (bookIds.length > 0) result.push({ name: shelf.name, bookIds });
+    }
+    return result;
   }
 
   /**
