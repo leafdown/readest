@@ -1068,7 +1068,7 @@ const Bookshelf: React.FC<BookshelfProps> = ({
         <div ref={osRootRef} data-overlayscrollbars-initialize='' className='min-h-0 flex-1'>
           {!contentSearch?.query.trim() && hasItems && isGridMode && (
             <VirtuosoGrid<unknown, BookshelfListContext>
-              overscan={200}
+              overscan={600}
               totalCount={gridTotalCount}
               components={GRID_VIRTUOSO_COMPONENTS}
               context={listContext}
@@ -1079,7 +1079,7 @@ const Bookshelf: React.FC<BookshelfProps> = ({
           )}
           {!contentSearch?.query.trim() && hasItems && !isGridMode && (
             <Virtuoso<unknown, BookshelfListContext>
-              overscan={200}
+              overscan={600}
               totalCount={sortedBookshelfItems.length}
               components={LIST_VIRTUOSO_COMPONENTS}
               context={listContext}

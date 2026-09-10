@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { MdCheckCircle, MdCheckCircleOutline, MdChevronRight, MdChevronLeft } from 'react-icons/md';
 import { useEnv } from '@/context/EnvContext';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -232,4 +232,16 @@ const GroupItem: React.FC<GroupItemProps> = ({ mode, group, isSelectMode, groupS
   );
 };
 
-export default GroupItem;
+/**
+ * Memoized: a grouped shelf at calibre scale (tens of thousands of group
+ * cards, each mounting a cover mosaic) must not repaint a card unless its
+ * data or selection actually changed.
+ */
+export default memo(
+  GroupItem,
+  (prev, next) =>
+    prev.group === next.group &&
+    prev.mode === next.mode &&
+    prev.isSelectMode === next.isSelectMode &&
+    prev.groupSelected === next.groupSelected,
+);
