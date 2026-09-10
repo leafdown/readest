@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useEnv } from '@/context/EnvContext';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -549,4 +549,33 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
   );
 };
 
-export default BookshelfItem;
+/**
+ * Memoized with an explicit field comparator (not shallow-equal): the
+ * handler props are compared by reference so no cell can hold stale
+ * closures, while data props (the item, selection, transfer overlay) drive
+ * re-renders. Grouped shelves render the same book in several groups and
+ * each group card mounts several BookItems — without this, every parent
+ * re-render (transfer ticks, selection churn) repaints the whole mounted
+ * range at 4× cell density.
+ */
+export default memo(
+  BookshelfItem,
+  (prev, next) =>
+    prev.item === next.item &&
+    prev.mode === next.mode &&
+    prev.coverFit === next.coverFit &&
+    prev.isSelectMode === next.isSelectMode &&
+    prev.itemSelected === next.itemSelected &&
+    prev.transferProgress === next.transferProgress &&
+    prev.showTimeRemaining === next.showTimeRemaining &&
+    prev.setLoading === next.setLoading &&
+    prev.toggleSelection === next.toggleSelection &&
+    prev.handleGroupBooks === next.handleGroupBooks &&
+    prev.handleBookDownload === next.handleBookDownload &&
+    prev.handleBookUpload === next.handleBookUpload &&
+    prev.handleBookDelete === next.handleBookDelete &&
+    prev.handleSetSelectMode === next.handleSetSelectMode &&
+    prev.handleShowDetailsBook === next.handleShowDetailsBook &&
+    prev.handleLibraryNavigation === next.handleLibraryNavigation &&
+    prev.handleUpdateReadingStatus === next.handleUpdateReadingStatus,
+);

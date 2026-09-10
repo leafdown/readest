@@ -1021,7 +1021,11 @@ const Bookshelf: React.FC<BookshelfProps> = ({
       }
       const item = sortedBookshelfItems[index];
       if (!item) return `library-item-${index}`;
-      return `library-item-${'hash' in item ? item.hash : item.id}`;
+      // Value grouping (tags/subjects/authors) puts the SAME book in several
+      // groups, so its hash alone collides across the flat list — duplicate
+      // React keys made grouped shelves stutter on scroll. The index suffix
+      // keeps every position unique.
+      return `library-item-${index}-${'hash' in item ? item.hash : item.id}`;
     },
     [sortedBookshelfItems, isGridMode],
   );
