@@ -22,7 +22,7 @@ export function useCalibreSync() {
   }, [envConfig]);
 
   const checkCalibreServers = useCallback(
-    async (notifyOnFailure = false) => {
+    async (manual = false) => {
       if (!appService) return;
       if (isSyncingRef.current) return;
       await ensureHydrated();
@@ -30,7 +30,12 @@ export function useCalibreSync() {
 
       try {
         isSyncingRef.current = true;
-        await syncAllCalibreServers(appService, { notifyOnFailure });
+        // Manual syncs force a full feed walk; the periodic auto pass may
+        // short-circuit on an unchanged book count.
+        await syncAllCalibreServers(appService, {
+          notifyOnFailure: manual,
+          force: manual,
+        });
       } catch (error) {
         console.error('Calibre sync error:', error);
       } finally {
@@ -46,8 +51,8 @@ export function useCalibreSync() {
   }, [checkCalibreServers]);
 
   // Listen for explicit sync requests (settings form "Sync now" and after
-  // connect — flagged `manual` so failures toast — vs. the silent startup
-  // and periodic passes).
+  // connect — flagged `manual` so failures toast AND the full walk is
+  // forced — vs. the silent startup and periodic passes).
   useEffect(() => {
     const handler = (event: CustomEvent) => {
       void checkCalibreServers(!!event.detail?.manual);

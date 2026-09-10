@@ -187,17 +187,25 @@ const downloadCalibreCover = async (
   }
 };
 
-/** Orchestrates: fetch, reconcile, apply to the library store, download missing covers. */
+/**
+ * Orchestrates: fetch, reconcile, apply to the library store, download
+ * missing covers. `force` (manual Sync Now / connect) always walks the full
+ * feed; the periodic auto pass may short-circuit on an unchanged book count
+ * — a full walk at a 15k-book library is hundreds of requests plus a
+ * whole-shelf reconcile, and doing that every five minutes for no change
+ * was visible as periodic jank.
+ */
 export const syncCalibreServer = async (
   appService: AppService,
   server: CalibreServer,
+  options: { force?: boolean } = {},
 ): Promise<void> => {
   const client = createCalibreClient(server);
   const progress = useCalibreSyncProgressStore.getState();
   progress.begin(server.id);
 
   try {
-    await syncCalibreServerInner(appService, server, client, progress);
+    await syncCalibreServerInner(appService, server, client, progress, options.force === true);
     progress.finish(server.id);
   } catch (error) {
     progress.finish(server.id);
@@ -210,6 +218,7 @@ const syncCalibreServerInner = async (
   server: CalibreServer,
   client: ReturnType<typeof createCalibreClient>,
   progress: ReturnType<typeof useCalibreSyncProgressStore.getState>,
+  force: boolean,
 ): Promise<void> => {
   const info = await client.getLibraryInfo();
   // Persist a newly-detected flavor (rows from before detection have none).
@@ -231,8 +240,29 @@ const syncCalibreServerInner = async (
   }
   const libraryName = info.libraries.find((l) => l.id === libraryId)?.name ?? libraryId;
   if (libraryId !== server.libraryId || libraryName !== server.libraryName) {
-    useCalibreServerStore.getState().updateServer(server.id, { libraryId, libraryName });
-    server = { ...server, libraryId, libraryName };
+    // A library switch invalidates the stored count probe.
+    useCalibreServerStore.getState().updateServer(server.id, {
+      libraryId,
+      libraryName,
+      lastSyncedBookCount: undefined,
+    });
+    server = { ...server, libraryId, libraryName, lastSyncedBookCount: undefined };
+  }
+
+  // Auto-pass change probe: when the server reports the same book count as
+  // the last completed sync, skip the full walk entirely. Metadata edits
+  // without add/remove are only picked up by a manual "Sync Now" (always
+  // force) — the documented trade-off for keeping a 15k-library auto pass
+  // at two requests.
+  if (!force && server.lastSyncedBookCount !== undefined) {
+    const count = await client.getBookCount(libraryId).catch(() => undefined);
+    if (count !== undefined && count === server.lastSyncedBookCount) {
+      useCalibreServerStore.getState().updateServer(server.id, { lastSyncedAt: Date.now() });
+      await useCalibreServerStore
+        .getState()
+        .saveCalibreServers({ getAppService: async () => appService });
+      return;
+    }
   }
 
   const serverBooks = await client.listAllBooks(libraryId, (fetched, total) =>
@@ -294,10 +324,19 @@ const syncCalibreServerInner = async (
   }
   const newLibrary = Array.from(merged.values());
 
-  useLibraryStore.getState().setLibrary(newLibrary);
-  await appService.saveLibraryBooks(newLibrary);
+  // Nothing changed (the common case for the periodic pass): leave the
+  // library untouched — at a 15k-book library a redundant setLibrary +
+  // whole-file rewrite re-sorted the entire shelf every five minutes.
+  const unchanged = upserts.length === 0 && replaced.size === 0 && tombstoneHashes.length === 0;
+  if (!unchanged) {
+    useLibraryStore.getState().setLibrary(newLibrary);
+    await appService.saveLibraryBooks(newLibrary);
+  }
 
-  useCalibreServerStore.getState().updateServer(server.id, { lastSyncedAt: now });
+  useCalibreServerStore.getState().updateServer(server.id, {
+    lastSyncedAt: now,
+    lastSyncedBookCount: serverBooks.length,
+  });
   await useCalibreServerStore.getState().saveCalibreServers(toEnvConfig(appService));
 };
 
@@ -306,11 +345,12 @@ const syncCalibreServerInner = async (
  * periodic 5-minute pass runs while the user reads, and an offline Docker
  * box must not toast every interval — mirrors syncAllAbsServers. The
  * settings form's explicit "Sync now" opts into failure toasts via
- * `notifyOnFailure`.
+ * `notifyOnFailure` and always walks the full feed via `force` (the auto
+ * pass may short-circuit on an unchanged book count).
  */
 export const syncAllCalibreServers = async (
   appService: AppService,
-  options: { notifyOnFailure?: boolean } = {},
+  options: { notifyOnFailure?: boolean; force?: boolean } = {},
 ): Promise<void> => {
   const servers = useCalibreServerStore
     .getState()
@@ -318,7 +358,7 @@ export const syncAllCalibreServers = async (
     .filter((s) => !s.disabled);
   for (const server of servers) {
     try {
-      await syncCalibreServer(appService, server);
+      await syncCalibreServer(appService, server, { force: options.force === true });
     } catch (error) {
       console.error(`[Calibre] sync failed for server "${server.name}":`, error);
       if (options.notifyOnFailure) {

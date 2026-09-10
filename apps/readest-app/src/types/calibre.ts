@@ -26,6 +26,12 @@ export interface CalibreServer {
   /** Server flavor; absent means 'calibre' (rows from before detection existed). */
   flavor?: CalibreFlavor;
   lastSyncedAt?: number;
+  /**
+   * Book count at the last completed full sync, used by the periodic auto
+   * pass as a cheap change probe: an unchanged count skips the full feed
+   * walk. Manual "Sync Now" always walks. Reset when the library changes.
+   */
+  lastSyncedBookCount?: number;
   disabled?: boolean;
   addedAt?: number;
   deletedAt?: number;

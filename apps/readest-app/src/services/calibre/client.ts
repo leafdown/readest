@@ -283,6 +283,20 @@ export class CalibreClient {
   }
 
   /**
+   * Cheap book count for the auto-sync change probe: official servers expose
+   * total_num on a minimal search, calibre-web has /opds/stats. Returns
+   * undefined when the probe isn't available.
+   */
+  async getBookCount(libraryId: string): Promise<number | undefined> {
+    if (this.flavor === 'calibre-web') {
+      const stats = await this.fetchJSON<{ books?: number }>('/opds/stats');
+      return typeof stats.books === 'number' ? stats.books : undefined;
+    }
+    const page = await this.searchBookIds(libraryId, { num: 1 });
+    return typeof page.total_num === 'number' ? page.total_num : undefined;
+  }
+
+  /**
    * Every book in the library with metadata. Official servers go through the
    * /ajax search + batch metadata API; Calibre-Web has no batch JSON API, so
    * the OPDS acquisition feed is walked page by page (each entry already

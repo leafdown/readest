@@ -422,6 +422,22 @@ const CalibreServerDetail: React.FC<CalibreServerDetailProps> = ({
         )}
       </div>
 
+      <BoxedList>
+        <SettingsSwitchRow
+          label={_('Auto Sync')}
+          description={_(
+            'Check the server for new books every few minutes. Large libraries may prefer manual sync.',
+          )}
+          checked={!server.disabled}
+          onChange={() => {
+            useCalibreServerStore
+              .getState()
+              .updateServer(server.id, { disabled: server.disabled !== true });
+            persist();
+          }}
+        />
+      </BoxedList>
+
       <div className='flex items-center justify-between gap-3 pt-1'>
         <button
           type='button'
