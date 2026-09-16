@@ -9,6 +9,14 @@ import { LibraryViewModeType } from '@/types/settings';
 import BookCover from '@/components/BookCover';
 import { useSettingsStore } from '@/store/settingsStore';
 
+// Grid previews always show four covers. List-mode shelves used to render
+// EVERY book in the group inside one horizontally-scrolling cell — a tag with
+// a thousand books mounted a thousand covers in a single virtual item. The
+// preview is capped and a "+N" tile points at the rest (the card navigates
+// into the group).
+const GRID_PREVIEW_COUNT = 4;
+const LIST_PREVIEW_COUNT = 50;
+
 interface GroupItemProps {
   mode: LibraryViewModeType;
   group: BooksGroup;
@@ -137,23 +145,30 @@ const GroupItem: React.FC<GroupItemProps> = ({ mode, group, isSelectMode, groupS
             }
             onScroll={mode === 'list' ? handleScroll : undefined}
           >
-            {group.books.slice(0, mode === 'grid' ? 4 : undefined).map((book) => (
-              <div
-                key={book.hash}
-                className={clsx(
-                  'relative aspect-[28/41] h-full',
-                  mode === 'grid' && 'w-full',
-                  mode === 'list' && 'shrink-0',
-                )}
-              >
-                <BookCover
-                  book={book}
-                  isPreview
-                  showSpine={settings.librarySkeuomorphicCovers}
-                  imageClassName='rounded-[2px]'
-                />
+            {group.books
+              .slice(0, mode === 'grid' ? GRID_PREVIEW_COUNT : LIST_PREVIEW_COUNT)
+              .map((book) => (
+                <div
+                  key={book.hash}
+                  className={clsx(
+                    'relative aspect-[28/41] h-full',
+                    mode === 'grid' && 'w-full',
+                    mode === 'list' && 'shrink-0',
+                  )}
+                >
+                  <BookCover
+                    book={book}
+                    isPreview
+                    showSpine={settings.librarySkeuomorphicCovers}
+                    imageClassName='rounded-[2px]'
+                  />
+                </div>
+              ))}
+            {mode === 'list' && group.books.length > LIST_PREVIEW_COUNT && (
+              <div className='bg-base-200/60 text-base-content/60 border-base-content/10 flex aspect-[28/41] h-full shrink-0 items-center justify-center rounded-[2px] border text-sm'>
+                +{group.books.length - LIST_PREVIEW_COUNT}
               </div>
-            ))}
+            )}
           </div>
           {mode === 'list' && showLeftArrow && (
             <div className='absolute left-[-0.5px] top-0 h-full w-12'>
