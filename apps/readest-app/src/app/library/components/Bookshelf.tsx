@@ -248,13 +248,19 @@ const Bookshelf: React.FC<BookshelfProps> = ({
   const autofocusRef = useAutoFocus<HTMLDivElement>();
   useSpatialNavigation(autofocusRef);
 
-  const { setCurrentBookshelf, setLibrary, updateBooks } = useLibraryStore();
-  const { setSelectedBooks, getSelectedBooks, toggleSelectedBook } = useLibraryStore();
+  // Field selectors (see LibraryPageContent): a whole-store subscription
+  // repainted every mounted shelf cell on each unrelated store change.
+  const setCurrentBookshelf = useLibraryStore((s) => s.setCurrentBookshelf);
+  const setLibrary = useLibraryStore((s) => s.setLibrary);
+  const updateBooks = useLibraryStore((s) => s.updateBooks);
+  const setSelectedBooks = useLibraryStore((s) => s.setSelectedBooks);
+  const getSelectedBooks = useLibraryStore((s) => s.getSelectedBooks);
+  const toggleSelectedBook = useLibraryStore((s) => s.toggleSelectedBook);
   // The raw Set from the store: its identity only changes when the selection
   // does, so memos keyed on it stay stable across unrelated re-renders
   // (getSelectedBooks() allocates a fresh array per call).
-  const { selectedBooks: selectedBookSet } = useLibraryStore();
-  const { getGroupName } = useLibraryStore();
+  const selectedBookSet = useLibraryStore((s) => s.selectedBooks);
+  const getGroupName = useLibraryStore((s) => s.getGroupName);
 
   const uiLanguage = localStorage?.getItem('i18nextLng') || '';
 

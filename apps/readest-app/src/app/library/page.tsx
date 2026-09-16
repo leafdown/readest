@@ -213,21 +213,25 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
   const router = useAppRouter();
   const { envConfig, appService } = useEnv();
   const { token, user } = useAuth();
-  const {
-    library: libraryBooks,
-    libraryLoaded: libraryLoadedFromDisk,
-    isSyncing,
-    syncProgress,
-    updateBook,
-    updateBooks,
-    setLibrary,
-    getGroupId,
-    getGroupName,
-    checkOpenWithBooks,
-    checkLastOpenBooks,
-    setCheckOpenWithBooks,
-    setCheckLastOpenBooks,
-  } = useLibraryStore();
+  // Field selectors, not `useLibraryStore()`: a whole-store subscription
+  // re-rendered the entire page (and every mounted shelf cell through fresh
+  // handler identities) on every unrelated store change — notably each cover
+  // thumbnail generated while scrolling a grouped shelf. Actions are stable
+  // zustand references and never re-render; the data fields above re-render
+  // only when they themselves change.
+  const libraryBooks = useLibraryStore((s) => s.library);
+  const libraryLoadedFromDisk = useLibraryStore((s) => s.libraryLoaded);
+  const isSyncing = useLibraryStore((s) => s.isSyncing);
+  const syncProgress = useLibraryStore((s) => s.syncProgress);
+  const updateBook = useLibraryStore((s) => s.updateBook);
+  const updateBooks = useLibraryStore((s) => s.updateBooks);
+  const setLibrary = useLibraryStore((s) => s.setLibrary);
+  const getGroupId = useLibraryStore((s) => s.getGroupId);
+  const getGroupName = useLibraryStore((s) => s.getGroupName);
+  const checkOpenWithBooks = useLibraryStore((s) => s.checkOpenWithBooks);
+  const checkLastOpenBooks = useLibraryStore((s) => s.checkLastOpenBooks);
+  const setCheckOpenWithBooks = useLibraryStore((s) => s.setCheckOpenWithBooks);
+  const setCheckLastOpenBooks = useLibraryStore((s) => s.setCheckLastOpenBooks);
   const _ = useTranslation();
   const { selectFiles } = useFileSelector(appService, _);
   const { safeAreaInsets: insets, isRoundedWindow } = useThemeStore();
