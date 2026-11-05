@@ -185,6 +185,12 @@ msgstr "Buang buku ini daripada awan dan peranti?"
 msgid "Remove"
 msgstr "Buang"
 
+msgid "Remove from Library, Keep File"
+msgstr "Buang daripada pustaka, kekalkan fail"
+
+msgid "Remove this book from your library and the cloud? The file stays on this device."
+msgstr "Buang buku ini daripada pustaka dan awan anda? Fail kekal pada peranti ini."
+
 msgid "Remove from Cloud Only"
 msgstr "Buang dari Awan Sahaja"
 
@@ -287,14 +293,14 @@ msgstr "Tiada buku terbuka"
 msgid "Uploaded to Readest:"
 msgstr "Dimuat naik ke Readest:"
 
+msgid "Auto sync"
+msgstr "Penyegerakan automatik"
+
 msgid "Log in Readest Account"
 msgstr "Log masuk ke akaun Readest"
 
 msgid "Log out as %1"
 msgstr "Log keluar sebagai %1"
-
-msgid "Auto sync"
-msgstr "Penyegerakan automatik"
 
 msgid "Readest library"
 msgstr "Pustaka Readest"
@@ -337,9 +343,6 @@ msgstr "Semak kemas kini"
 
 msgid "Please login first"
 msgstr "Sila log masuk dahulu"
-
-msgid "Please configure Readest settings first"
-msgstr "Sila konfigurasikan tetapan Readest dahulu"
 
 msgid "(none)"
 msgstr "(tiada)"
@@ -506,9 +509,6 @@ msgstr "Penyegerakan penuh: menarik semua anotasi…"
 msgid "Pulling annotations..."
 msgstr "Menarik anotasi…"
 
-msgid "Authentication failed, please login again"
-msgstr "Pengesahan gagal, sila log masuk semula"
-
 msgid "Failed to pull annotations"
 msgstr "Gagal menarik anotasi"
 
@@ -521,11 +521,17 @@ msgstr "%1 anotasi ditarik"
 msgid "Your Readest session has expired. Please log in again."
 msgstr "Sesi Readest anda telah tamat. Sila log masuk semula."
 
+msgid "Authentication failed, please login again"
+msgstr "Pengesahan gagal, sila log masuk semula"
+
 msgid "Login"
 msgstr "Log masuk"
 
 msgid "Please enter both email and password"
 msgstr "Sila masukkan e-mel dan kata laluan"
+
+msgid "Sign in with a code"
+msgstr "Log masuk dengan kod"
 
 msgid "Please configure Supabase URL and API key first"
 msgstr "Sila konfigurasikan URL Supabase dan kunci API dahulu"
@@ -533,11 +539,17 @@ msgstr "Sila konfigurasikan URL Supabase dan kunci API dahulu"
 msgid "Logging in..."
 msgstr "Sedang log masuk…"
 
+msgid "Login failed: %1"
+msgstr "Log masuk gagal: %1"
+
 msgid "Successfully logged in to Readest"
 msgstr "Berjaya log masuk ke Readest"
 
-msgid "Login failed: %1"
-msgstr "Log masuk gagal: %1"
+msgid "Scan the QR code with a phone signed in to Readest, or open %1 and enter this code:\n\n%2"
+msgstr "Imbas kod QR dengan telefon yang telah log masuk ke Readest, atau buka %1 dan masukkan kod ini:\n\n%2"
+
+msgid "The code expired. Please try again."
+msgstr "Kod telah tamat tempoh. Sila cuba lagi."
 
 msgid "Logged out from Readest"
 msgstr "Log keluar daripada Readest"
@@ -566,8 +578,65 @@ msgstr "Gagal menarik kemajuan bacaan"
 msgid "Reading progress synchronized"
 msgstr "Kemajuan bacaan disegerakkan"
 
+msgid "Saved reading position cannot be used with this copy of the book"
+msgstr "Kedudukan bacaan yang disimpan tidak boleh digunakan dengan salinan buku ini"
+
 msgid "No saved reading progress found for this book"
 msgstr "Tiada kemajuan bacaan tersimpan ditemui untuk buku ini"
+
+msgid "Sync was cancelled."
+msgstr "Penyegerakan dibatalkan."
+
+msgid "The connection timed out. Please try again."
+msgstr "Sambungan tamat masa. Sila cuba lagi."
+
+msgid "The network is unreachable. Please check the internet connection."
+msgstr "Rangkaian tidak dapat dicapai. Sila semak sambungan internet."
+
+msgid "The server could not be found. Please check the internet connection."
+msgstr "Pelayan tidak ditemui. Sila semak sambungan internet."
+
+msgid "The server refused the connection. Please try again later."
+msgstr "Pelayan menolak sambungan. Sila cuba lagi kemudian."
+
+msgid "The connection was interrupted. Please try again."
+msgstr "Sambungan terputus. Sila cuba lagi."
+
+msgid "A secure connection to the server could not be established."
+msgstr "Sambungan selamat ke pelayan tidak dapat diwujudkan."
+
+msgid "Authentication failed. Please log in again."
+msgstr "Pengesahan gagal. Sila log masuk semula."
+
+msgid "The account changed during sync."
+msgstr "Akaun berubah semasa penyegerakan."
+
+msgid "The file was not found in the cloud."
+msgstr "Fail tidak ditemui dalam awan."
+
+msgid "The local file is missing."
+msgstr "Fail tempatan tiada."
+
+msgid "An internal error occurred. Please try again."
+msgstr "Ralat dalaman berlaku. Sila cuba lagi."
+
+msgid "Access denied."
+msgstr "Akses ditolak."
+
+msgid "Not found on the server."
+msgstr "Tidak ditemui pada pelayan."
+
+msgid "The file is too large."
+msgstr "Fail terlalu besar."
+
+msgid "Too many requests. Please try again later."
+msgstr "Terlalu banyak permintaan. Sila cuba lagi kemudian."
+
+msgid "The server is temporarily unavailable. Please try again later."
+msgstr "Pelayan tidak tersedia buat sementara waktu. Sila cuba lagi kemudian."
+
+msgid "The request failed. Please try again."
+msgstr "Permintaan gagal. Sila cuba lagi."
 
 msgid "Reading statistics are up to date"
 msgstr "Statistik bacaan adalah terkini"

@@ -317,6 +317,65 @@ impl<R: Runtime> NativeBridge<R> {
 }
 
 impl<R: Runtime> NativeBridge<R> {
+    pub fn get_lookup_apps(&self) -> crate::Result<GetLookupAppsResponse> {
+        self.0
+            .run_mobile_plugin("get_lookup_apps", ())
+            .map_err(Into::into)
+    }
+
+    pub fn anki_status(&self) -> crate::Result<AnkiStatusResponse> {
+        self.0
+            .run_mobile_plugin("anki_status", ())
+            .map_err(Into::into)
+    }
+
+    pub fn anki_request_permission(&self) -> crate::Result<AnkiPermissionResponse> {
+        self.0
+            .run_mobile_plugin("anki_request_permission", ())
+            .map_err(Into::into)
+    }
+
+    pub fn anki_list_decks(&self) -> crate::Result<AnkiListDecksResponse> {
+        self.0
+            .run_mobile_plugin("anki_list_decks", ())
+            .map_err(Into::into)
+    }
+
+    pub fn anki_read_deck(
+        &self,
+        payload: AnkiReadDeckRequest,
+    ) -> crate::Result<AnkiReadDeckResponse> {
+        self.0
+            .run_mobile_plugin("anki_read_deck", payload)
+            .map_err(Into::into)
+    }
+
+    pub fn anki_add_notes(
+        &self,
+        payload: AnkiAddNotesRequest,
+    ) -> crate::Result<AnkiAddNotesResponse> {
+        self.0
+            .run_mobile_plugin("anki_add_notes", payload)
+            .map_err(Into::into)
+    }
+
+    pub fn anki_update_tags(
+        &self,
+        payload: AnkiUpdateTagsRequest,
+    ) -> crate::Result<AnkiUpdateTagsResponse> {
+        self.0
+            .run_mobile_plugin("anki_update_tags", payload)
+            .map_err(Into::into)
+    }
+
+    pub fn set_lookup_app(&self, payload: SetLookupAppRequest) -> crate::Result<()> {
+        self.0
+            .run_mobile_plugin("set_lookup_app", payload)
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
     pub fn select_directory(&self) -> crate::Result<SelectDirectoryResponse> {
         self.0
             .run_mobile_plugin("select_directory", ())
@@ -427,6 +486,30 @@ impl<R: Runtime> NativeBridge<R> {
             .run_mobile_plugin("refresh_eink_screen", ())
             .map_err(Into::into)
     }
+
+    pub fn is_eink_refresh_supported(&self) -> crate::Result<EinkRefreshSupportedResponse> {
+        self.0
+            .run_mobile_plugin("is_eink_refresh_supported", ())
+            .map_err(Into::into)
+    }
+
+    pub fn query_pen_capabilities(&self) -> crate::Result<QueryPenCapabilitiesResponse> {
+        self.0
+            .run_mobile_plugin("query_pen_capabilities", ())
+            .map_err(Into::into)
+    }
+
+    pub fn start_raw_drawing(&self, payload: StartRawDrawingRequest) -> crate::Result<()> {
+        self.0
+            .run_mobile_plugin("start_raw_drawing", payload)
+            .map_err(Into::into)
+    }
+
+    pub fn stop_raw_drawing(&self) -> crate::Result<()> {
+        self.0
+            .run_mobile_plugin("stop_raw_drawing", ())
+            .map_err(Into::into)
+    }
 }
 
 impl<R: Runtime> NativeBridge<R> {
@@ -514,6 +597,32 @@ impl<R: Runtime> NativeBridge<R> {
             .run_mobile_plugin("set_bookshelf_widget_catalog", payload)
             .map_err(Into::into)
     }
+
+    pub fn update_reading_widget(
+        &self,
+        payload: UpdateReadingWidgetRequest,
+    ) -> crate::Result<UpdateReadingWidgetResponse> {
+        // iOS resolves without a body, which reads as no failures.
+        self.0
+            .run_mobile_plugin::<Option<UpdateReadingWidgetResponse>>(
+                "update_reading_widget",
+                payload,
+            )
+            .map(Option::unwrap_or_default)
+            .map_err(Into::into)
+    }
+
+    pub fn get_reading_widget_instances(&self) -> crate::Result<GetReadingWidgetInstancesResponse> {
+        self.0
+            .run_mobile_plugin("get_reading_widget_instances", ())
+            .map_err(Into::into)
+    }
+
+    pub fn set_reading_widget_catalog(&self, payload: ReadingWidgetCatalog) -> crate::Result<()> {
+        self.0
+            .run_mobile_plugin("set_reading_widget_catalog", payload)
+            .map_err(Into::into)
+    }
 }
 
 impl<R: Runtime> NativeBridge<R> {
@@ -536,10 +645,17 @@ impl<R: Runtime> NativeBridge<R> {
             .map_err(|e| crate::Error::NativeBridgeError(format!("invalid base64 PNG: {e}")))
     }
 
+    pub fn paper_curl(&self, payload: serde_json::Value) -> crate::Result<serde_json::Value> {
+        self.0
+            .run_mobile_plugin("paper_curl", payload)
+            .map_err(Into::into)
+    }
+
     /// Native cover for the two-column page curl (#6106); see the Swift
     /// side. Android has no implementation yet and rejects.
     pub fn cover_webview_region(
         &self,
+        _window: &tauri::WebviewWindow<R>,
         payload: CaptureWebviewRegionRequest,
     ) -> crate::Result<CoverWebviewRegionResponse> {
         self.0
@@ -549,6 +665,7 @@ impl<R: Runtime> NativeBridge<R> {
 
     pub fn uncover_webview_region(
         &self,
+        _window: &tauri::WebviewWindow<R>,
         payload: UncoverWebviewRegionRequest,
     ) -> crate::Result<()> {
         self.0

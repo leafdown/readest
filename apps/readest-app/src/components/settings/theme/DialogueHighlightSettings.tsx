@@ -1,7 +1,8 @@
 import React from 'react';
 import clsx from 'clsx';
 import { useTranslation } from '@/hooks/useTranslation';
-import { BoxedList, SettingsRow, SettingsSwitchRow } from '../primitives';
+import { ViewSettings } from '@/types/book';
+import { BoxedList, SettingsRow, SettingsSelect, SettingsSwitchRow } from '../primitives';
 import ColorInput from './ColorInput';
 
 interface DialogueHighlightSettingsProps {
@@ -10,11 +11,15 @@ interface DialogueHighlightSettingsProps {
   backgroundColor: string;
   customTextColor: boolean;
   textColor: string;
+  italic: boolean;
+  weight: ViewSettings['dialogueHighlightWeight'];
+  onWeightChange: (weight: ViewSettings['dialogueHighlightWeight']) => void;
   onToggle: (enabled: boolean) => void;
   onCustomBackgroundToggle: (enabled: boolean) => void;
   onBackgroundColorChange: (color: string) => void;
   onCustomTextColorToggle: (enabled: boolean) => void;
   onTextColorChange: (color: string) => void;
+  onItalicToggle: (enabled: boolean) => void;
   'data-setting-id'?: string;
 }
 
@@ -24,11 +29,15 @@ const DialogueHighlightSettings: React.FC<DialogueHighlightSettingsProps> = ({
   backgroundColor,
   customTextColor,
   textColor,
+  italic,
+  weight,
+  onWeightChange,
   onToggle,
   onCustomBackgroundToggle,
   onBackgroundColorChange,
   onCustomTextColorToggle,
   onTextColorChange,
+  onItalicToggle,
   'data-setting-id': dataSettingId,
 }) => {
   const _ = useTranslation();
@@ -119,6 +128,26 @@ const DialogueHighlightSettings: React.FC<DialogueHighlightSettingsProps> = ({
           />
         </SettingsRow>
       )}
+      <SettingsRow label={_('Weight')}>
+        <SettingsSelect
+          ariaLabel={_('Weight')}
+          value={weight}
+          onChange={(e) =>
+            onWeightChange(e.target.value as ViewSettings['dialogueHighlightWeight'])
+          }
+          options={[
+            { value: 'normal', label: _('Normal') },
+            { value: 'slightly-heavier', label: _('Slightly heavier') },
+            { value: 'bold', label: _('Bold') },
+          ]}
+        />
+      </SettingsRow>
+      <SettingsSwitchRow
+        label={_('Italic Text')}
+        description={_('Mark italic text like dialogue')}
+        checked={italic}
+        onChange={() => onItalicToggle(!italic)}
+      />
     </BoxedList>
   );
 };

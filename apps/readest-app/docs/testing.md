@@ -10,14 +10,24 @@ Runs tests in a **jsdom** environment. No browser or Tauri runtime required.
 
 ```bash
 pnpm test                                       # Run all unit tests
-pnpm test -- src/__tests__/utils/misc.test.ts   # Run a single file
-pnpm test -- --watch                            # Watch mode
+pnpm test --run src/__tests__/utils/misc.test.ts  # Run only these files (no `--`)
+pnpm test --watch                               # Watch mode
 ```
 
 - **Config:** `vitest.config.mts`
 - **Pattern:** `src/**/*.test.ts` (excludes `*.browser.test.ts` and `*.tauri.test.ts`)
 - **Environment:** jsdom
 - **Use for:** Pure logic, utilities, services that don't need real browser APIs or Tauri IPC.
+
+Unit tests use at most **four workers**, including the full pre-push suite,
+matching PR CI. Higher concurrency can make CPU-heavy tests exceed the default
+five-second timeout on shared machines (#7239).
+
+Use `pnpm test --run --maxWorkers=2` to lower concurrency, or
+`VITEST_MAX_WORKERS=2 git push` to apply it to the pre-push hook. Vitest's
+`VITEST_MAX_WORKERS` environment variable takes precedence over the config and
+CLI flag. Keep timeouts unchanged when investigating contention, and compare
+complete runs rather than treating isolated retries as a passing full suite.
 
 ## Browser Tests (`pnpm test:browser`)
 
@@ -197,9 +207,10 @@ the same port — `chrome://inspect` in a local Chrome, or
   click it. Driving an import end-to-end needs X11 input (XTEST via python-xlib:
   focus the chooser, `Ctrl+L`, type the path, `Return` to select, `Return` to
   open) — or skip the picker and dispatch the app's own `import-book-files` event.
-- **Passing `--remote-debugging-port` on argv works too**, but `tauri-plugin-cli`
-  parses the same argv for open-with paths and warns on every launch. Prefer the
-  env var.
+- **Passing `--remote-debugging-port` on argv does not work.** The CEF runtime
+  keeps Chromium's remote debugging switched off unless the app asks for it, which
+  it does only for `READEST_CDP_PORT`; Chromium logs "DevTools remote debugging is
+  disallowed by the system admin" for a stray switch.
 
 ## crengine XPointer Oracle (KOReader sync)
 

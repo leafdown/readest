@@ -141,6 +141,19 @@ describe('Settings > Behavior > Scroll', () => {
 
     expect(scrolledModeSwitch()?.disabled).toBe(false);
   });
+
+  // Reflowable scrolled turns snap to whole lines, which overrides any overlap,
+  // so the setting only exists for fixed-layout books.
+  it('shows Overlap Pixels only for a fixed-layout book', () => {
+    currentIsFixedLayout = true;
+    render(<ControlPanel bookKey='test' onRegisterReset={() => {}} />);
+    expect(screen.queryByText('Overlap Pixels')).not.toBeNull();
+    cleanup();
+
+    currentIsFixedLayout = false;
+    render(<ControlPanel bookKey='test' onRegisterReset={() => {}} />);
+    expect(screen.queryByText('Overlap Pixels')).toBeNull();
+  });
 });
 
 describe('Scrolled Mode and the page-turn attributes', () => {
@@ -163,5 +176,27 @@ describe('Scrolled Mode and the page-turn attributes', () => {
     fireEvent.click(scrolledModeSwitch()!);
 
     expect(applyPageTurnAttributes).toHaveBeenCalled();
+  });
+});
+
+// #6872: Open Images follows the global/book scope like the other behavior
+// settings, so a choice made with global settings on reaches every book.
+describe('Settings > Behavior > Open Images', () => {
+  it('saves the gesture with the global scope, with no per-book note', () => {
+    render(<ControlPanel bookKey='test' onRegisterReset={() => {}} />);
+    expect(screen.queryByText('For this book only')).toBeNull();
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Open Images' }), {
+      target: { value: 'longPress' },
+    });
+
+    expect(saveViewSettings).toHaveBeenLastCalledWith(
+      {},
+      'test',
+      'imageViewerGesture',
+      'longPress',
+      false,
+      false,
+    );
   });
 });

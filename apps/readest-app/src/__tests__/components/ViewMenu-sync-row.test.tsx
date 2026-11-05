@@ -79,6 +79,9 @@ vi.mock('@/hooks/useCloudSyncStatus', () => ({
   useCloudSyncStatus: () => mockSyncStatus,
 }));
 vi.mock('@/helpers/settings', () => ({ saveViewSettings: vi.fn() }));
+vi.mock('@/components/vocabulary/VocabularyDialog', () => ({
+  setVocabularyDialogVisible: vi.fn(),
+}));
 vi.mock('@/services/constants', () => ({
   MAX_ZOOM_LEVEL: 200,
   MIN_ZOOM_LEVEL: 50,
@@ -93,7 +96,7 @@ vi.mock('@/utils/webtoon', () => ({ getScrollGapAttr: vi.fn() }));
 vi.mock('@/app/reader/hooks/useCapturedTurn', () => ({ applyPageTurnAttributes: vi.fn() }));
 vi.mock('@/utils/config', () => ({ getMaxInlineSize: () => 720 }));
 vi.mock('@/utils/ambientLight', () => ({ nextThemeMode: (mode: string) => mode }));
-vi.mock('@/utils/window', () => ({ tauriHandleToggleFullScreen: vi.fn() }));
+vi.mock('@/utils/window', () => ({ canToggleFullScreen: () => false, toggleFullScreen: vi.fn() }));
 vi.mock('@/utils/event', () => ({
   eventDispatcher: { dispatch: (...a: unknown[]) => mockDispatch(...a), on: vi.fn(), off: vi.fn() },
 }));
@@ -167,6 +170,36 @@ describe('ViewMenu sync row (issue #5910)', () => {
     // A lone Readest Cloud provider is not worth naming — the row means what it
     // always meant.
     expect(screen.queryByText('Synced via {{provider}}')).toBeNull();
+  });
+
+  it('pushes to Hardcover on tap only when it is on the row', () => {
+    render(<ViewMenu bookKey='book-1' />);
+    fireEvent.click(screen.getByText('Synced 2 minutes ago'));
+
+    const events = mockDispatch.mock.calls.map((call) => call[0]);
+    expect(events).not.toContain('hardcover-push-progress');
+    expect(events).not.toContain('hardcover-push-notes');
+
+    cleanup();
+    mockDispatch.mockClear();
+    mockSyncStatus.providers.push({
+      kind: 'hardcover',
+      name: 'Hardcover',
+      lastSyncedAt: 1,
+      syncing: false,
+      failed: false,
+    });
+    render(<ViewMenu bookKey='book-1' />);
+    fireEvent.click(screen.getByText('Synced 2 minutes ago'));
+
+    expect(mockDispatch).toHaveBeenCalledWith('hardcover-push-progress', {
+      bookKey: 'book-1',
+      silent: true,
+    });
+    expect(mockDispatch).toHaveBeenCalledWith('hardcover-push-notes', {
+      bookKey: 'book-1',
+      silent: true,
+    });
   });
 
   it('names a count when several providers are selected', () => {

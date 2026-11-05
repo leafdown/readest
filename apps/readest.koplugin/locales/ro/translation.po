@@ -185,6 +185,12 @@ msgstr "Elimini această carte din cloud și de pe dispozitiv?"
 msgid "Remove"
 msgstr "Elimină"
 
+msgid "Remove from Library, Keep File"
+msgstr "Elimină din bibliotecă, păstrează fișierul"
+
+msgid "Remove this book from your library and the cloud? The file stays on this device."
+msgstr "Elimini această carte din bibliotecă și din cloud? Fișierul rămâne pe acest dispozitiv."
+
 msgid "Remove from Cloud Only"
 msgstr "Elimină numai din cloud"
 
@@ -287,14 +293,14 @@ msgstr "Nicio carte deschisă"
 msgid "Uploaded to Readest:"
 msgstr "Încărcat în Readest:"
 
+msgid "Auto sync"
+msgstr "Sincronizare automată"
+
 msgid "Log in Readest Account"
 msgstr "Autentificare în contul Readest"
 
 msgid "Log out as %1"
 msgstr "Deconectare de la %1"
-
-msgid "Auto sync"
-msgstr "Sincronizare automată"
 
 msgid "Readest library"
 msgstr "Biblioteca Readest"
@@ -337,9 +343,6 @@ msgstr "Verifică actualizările"
 
 msgid "Please login first"
 msgstr "Autentifică-te mai întâi"
-
-msgid "Please configure Readest settings first"
-msgstr "Configurează mai întâi setările Readest"
 
 msgid "(none)"
 msgstr "(niciunul)"
@@ -506,9 +509,6 @@ msgstr "Sincronizare completă: se obțin toate adnotările…"
 msgid "Pulling annotations..."
 msgstr "Se obțin adnotările…"
 
-msgid "Authentication failed, please login again"
-msgstr "Autentificare eșuată, conectează-te din nou"
-
 msgid "Failed to pull annotations"
 msgstr "Obținerea adnotărilor a eșuat"
 
@@ -521,11 +521,17 @@ msgstr "%1 adnotări obținute"
 msgid "Your Readest session has expired. Please log in again."
 msgstr "Sesiunea Readest a expirat. Conectează-te din nou."
 
+msgid "Authentication failed, please login again"
+msgstr "Autentificare eșuată, conectează-te din nou"
+
 msgid "Login"
 msgstr "Autentificare"
 
 msgid "Please enter both email and password"
 msgstr "Introdu emailul și parola"
+
+msgid "Sign in with a code"
+msgstr "Conectează-te cu un cod"
 
 msgid "Please configure Supabase URL and API key first"
 msgstr "Configurează mai întâi URL-ul Supabase și cheia API"
@@ -533,11 +539,17 @@ msgstr "Configurează mai întâi URL-ul Supabase și cheia API"
 msgid "Logging in..."
 msgstr "Se conectează…"
 
+msgid "Login failed: %1"
+msgstr "Autentificare eșuată: %1"
+
 msgid "Successfully logged in to Readest"
 msgstr "Autentificat în Readest"
 
-msgid "Login failed: %1"
-msgstr "Autentificare eșuată: %1"
+msgid "Scan the QR code with a phone signed in to Readest, or open %1 and enter this code:\n\n%2"
+msgstr "Scanează codul QR cu un telefon conectat la Readest sau deschide %1 și introdu acest cod:\n\n%2"
+
+msgid "The code expired. Please try again."
+msgstr "Codul a expirat. Te rugăm să încerci din nou."
 
 msgid "Logged out from Readest"
 msgstr "Deconectat de la Readest"
@@ -566,8 +578,65 @@ msgstr "Obținerea progresului de citire a eșuat"
 msgid "Reading progress synchronized"
 msgstr "Progres de citire sincronizat"
 
+msgid "Saved reading position cannot be used with this copy of the book"
+msgstr "Poziția de lectură salvată nu poate fi folosită cu această copie a cărții"
+
 msgid "No saved reading progress found for this book"
 msgstr "Nu s-a găsit progres de citire salvat pentru această carte"
+
+msgid "Sync was cancelled."
+msgstr "Sincronizarea a fost anulată."
+
+msgid "The connection timed out. Please try again."
+msgstr "Conexiunea a expirat. Încercați din nou."
+
+msgid "The network is unreachable. Please check the internet connection."
+msgstr "Rețeaua nu este accesibilă. Verificați conexiunea la internet."
+
+msgid "The server could not be found. Please check the internet connection."
+msgstr "Serverul nu a fost găsit. Verificați conexiunea la internet."
+
+msgid "The server refused the connection. Please try again later."
+msgstr "Serverul a refuzat conexiunea. Încercați din nou mai târziu."
+
+msgid "The connection was interrupted. Please try again."
+msgstr "Conexiunea a fost întreruptă. Încercați din nou."
+
+msgid "A secure connection to the server could not be established."
+msgstr "Nu s-a putut stabili o conexiune securizată cu serverul."
+
+msgid "Authentication failed. Please log in again."
+msgstr "Autentificarea a eșuat. Conectați-vă din nou."
+
+msgid "The account changed during sync."
+msgstr "Contul s-a schimbat în timpul sincronizării."
+
+msgid "The file was not found in the cloud."
+msgstr "Fișierul nu a fost găsit în cloud."
+
+msgid "The local file is missing."
+msgstr "Fișierul local lipsește."
+
+msgid "An internal error occurred. Please try again."
+msgstr "A apărut o eroare internă. Încercați din nou."
+
+msgid "Access denied."
+msgstr "Acces refuzat."
+
+msgid "Not found on the server."
+msgstr "Nu a fost găsit pe server."
+
+msgid "The file is too large."
+msgstr "Fișierul este prea mare."
+
+msgid "Too many requests. Please try again later."
+msgstr "Prea multe solicitări. Încercați din nou mai târziu."
+
+msgid "The server is temporarily unavailable. Please try again later."
+msgstr "Serverul este temporar indisponibil. Încercați din nou mai târziu."
+
+msgid "The request failed. Please try again."
+msgstr "Solicitarea a eșuat. Încercați din nou."
 
 msgid "Reading statistics are up to date"
 msgstr "Statisticile de citire sunt actualizate"

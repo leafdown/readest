@@ -24,18 +24,26 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 
 import { useEnv } from '@/context/EnvContext';
+import { useAuth } from '@/context/AuthContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useFileSelector } from '@/hooks/useFileSelector';
 import { useCustomDictionaryStore } from '@/store/customDictionaryStore';
+import {
+  ensureCustomTranslatorsLoaded,
+  getLLMTranslators,
+  useCustomTranslatorStore,
+} from '@/store/customTranslatorStore';
+import { isCustomTranslatorAllowed } from '@/utils/access';
 import { eventDispatcher } from '@/utils/event';
 import { evictProvider, isSystemDictionaryEnabled } from '@/services/dictionaries/registry';
+import { getContextTranslator } from '@/services/dictionaries/providers/contextProvider';
 import { BUILTIN_PROVIDER_IDS } from '@/services/dictionaries/types';
 import {
-  clearRememberedLookupApp,
-  getRememberedLookupApp,
+  getLookupApps,
   isSystemDictionaryAvailable,
   isSystemDictionarySupported,
-  type RememberedLookupApp,
+  setLookupApp,
+  type LookupApp,
 } from '@/services/dictionaries/systemDictionary';
 import { queueDictionaryBinaryUpload } from '@/services/sync/replicaBinaryUpload';
 import type { ImportedDictionary, WebSearchEntry } from '@/services/dictionaries/types';
@@ -44,7 +52,14 @@ import {
   isValidUrlTemplate,
 } from '@/services/dictionaries/webSearchTemplates';
 import SubPageHeader from './SubPageHeader';
-import { BoxedList, SettingsRow, SettingsSelect, SettingsSwitchRow, Tips } from './primitives';
+import {
+  BoxedList,
+  SettingsInput,
+  SettingsRow,
+  SettingsSelect,
+  SettingsSwitchRow,
+  Tips,
+} from './primitives';
 
 /** Dictionary popup font-size multipliers, surfaced as percentages (#4443). */
 const FONT_SCALE_OPTIONS = [
@@ -64,7 +79,7 @@ interface ProviderRow {
   id: string;
   label: string;
   kind: 'builtin' | 'stardict' | 'mdict' | 'dict' | 'slob' | 'bgl' | 'plugin' | 'web';
-  badge: string;
+  badge?: string;
   imported?: ImportedDictionary;
   /** Set on `kind: 'web'` rows. The shape distinguishes deletable custom
    *  entries (when `builtinWeb` is false) from immutable built-ins. */
@@ -109,6 +124,7 @@ const builtinWebLabel = (id: string, _: (key: string) => string): string => {
 const builtinLabel = (id: string, _: (key: string) => string): string => {
   if (id === BUILTIN_PROVIDER_IDS.wiktionary) return _('Wiktionary');
   if (id === BUILTIN_PROVIDER_IDS.wikipedia) return _('Wikipedia');
+  if (id === BUILTIN_PROVIDER_IDS.context) return _('Context Dictionary');
   if (id === BUILTIN_PROVIDER_IDS.systemDictionary) return _('System Dictionary');
   return id;
 };
@@ -197,7 +213,7 @@ const SortableRow: React.FC<SortableRowProps> = ({
       {/* End-aligned type badge. Sits just before the toggle so all
           badges form a uniform column regardless of name length, instead
           of trailing the truncated name at a ragged x position. */}
-      <span className='badge badge-sm badge-ghost shrink-0'>{row.badge}</span>
+      {row.badge && <span className='badge badge-sm badge-ghost shrink-0'>{row.badge}</span>}
 
       <input
         type='checkbox'
@@ -266,6 +282,9 @@ const CustomDictionaries: React.FC<CustomDictionariesProps> = ({ onBack }) => {
     setEnabled,
     setFontScale,
     setAutoPlayPronunciation,
+    setSystemDictionaryFullscreen,
+    setContextTranslatorId,
+    setContextOptions,
     addWebSearch,
     updateWebSearch,
     removeWebSearch,
@@ -274,10 +293,28 @@ const CustomDictionaries: React.FC<CustomDictionariesProps> = ({ onBack }) => {
     markAvailableByContentId,
   } = useCustomDictionaryStore();
 
+  const [dictionariesLoaded, setDictionariesLoaded] = useState(false);
   useEffect(() => {
-    void loadCustomDictionaries(envConfig).catch(() => {});
+    void loadCustomDictionaries(envConfig)
+      .then((loaded) => setDictionariesLoaded(loaded))
+      .catch(() => {});
+    ensureCustomTranslatorsLoaded(envConfig);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The context dictionary asks one of the user's OpenAI-compatible custom
+  // translators (#5544), which are a premium feature. Subscribing to the
+  // translators re-renders the row when one is added or removed.
+  const { token } = useAuth();
+  useCustomTranslatorStore((s) => s.translators);
+  const hasPremium = isCustomTranslatorAllowed(token);
+  const llmTranslators = getLLMTranslators();
+  const contextTranslator = hasPremium ? getContextTranslator() : undefined;
+  const prompts = useCustomTranslatorStore((s) => s.prompts).filter((p) => !p.deletedAt);
+  const contextPromptId =
+    settings.contextPromptId === 'custom' || prompts.some((p) => p.id === settings.contextPromptId)
+      ? settings.contextPromptId!
+      : 'default';
 
   const { selectFiles } = useFileSelector(appService, _);
   const [importing, setImporting] = useState(false);
@@ -285,23 +322,25 @@ const CustomDictionaries: React.FC<CustomDictionariesProps> = ({ onBack }) => {
     stage: string;
     percentage: number;
   } | null>(null);
-  // Android only: the dictionary app remembered for the browser-excluding
-  // system-lookup chooser (issue #4559). Stays null on every other platform
-  // and whenever nothing has been remembered, so the reset row below only
-  // surfaces for the narrow case that can get "stuck" on one app.
-  const [rememberedLookupApp, setRememberedLookupApp] = useState<RememberedLookupApp | null>(null);
+  // Android only: the apps a system-dictionary lookup can go to (#4937).
+  const [lookupApps, setLookupApps] = useState<LookupApp[]>([]);
   useEffect(() => {
     if (!appService?.isAndroidApp) return;
     let cancelled = false;
-    void getRememberedLookupApp().then((app) => {
-      if (!cancelled) setRememberedLookupApp(app);
+    void getLookupApps().then((apps) => {
+      if (!cancelled) setLookupApps(apps);
     });
     return () => {
       cancelled = true;
     };
-  }, [appService]);
+  }, [appService?.isAndroidApp]);
   const handleFontScaleChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     setFontScale(Number(e.target.value));
+    await saveCustomDictionaries(envConfig);
+  };
+
+  const handleContextTranslatorChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
+    setContextTranslatorId(event.target.value);
     await saveCustomDictionaries(envConfig);
   };
 
@@ -310,14 +349,18 @@ const CustomDictionaries: React.FC<CustomDictionariesProps> = ({ onBack }) => {
     await saveCustomDictionaries(envConfig);
   };
 
-  const handleResetLookupApp = async () => {
-    await clearRememberedLookupApp();
-    setRememberedLookupApp(null);
-    eventDispatcher.dispatch('toast', {
-      type: 'info',
-      message: _('Lookup app reset. The next lookup will ask again.'),
-      timeout: 4000,
-    });
+  const handleSaveLookupsChange = async (enabled: boolean) => {
+    useCustomDictionaryStore.getState().setSaveLookupsToVocabulary(enabled);
+    await saveCustomDictionaries(envConfig);
+  };
+
+  const lookupAppKey = (app: LookupApp) => `${app.packageName}/${app.className}`;
+  const selectedLookupApp = lookupApps.find((app) => app.selected);
+  const handleLookupAppChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const chosen = lookupApps.find((app) => lookupAppKey(app) === event.target.value) ?? null;
+    const previous = lookupApps;
+    setLookupApps((apps) => apps.map((app) => ({ ...app, selected: app === chosen })));
+    if (!(await setLookupApp(chosen))) setLookupApps(previous);
   };
   // Edit and Delete are mutually-exclusive row affordances. Toggling one on
   // turns the other off so the trailing column never shows two icons at once.
@@ -429,6 +472,20 @@ const CustomDictionaries: React.FC<CustomDictionariesProps> = ({ onBack }) => {
           reason: disabled
             ? _('System dictionary integration is coming soon on this platform.')
             : undefined,
+        });
+        continue;
+      }
+      if (id === BUILTIN_PROVIDER_IDS.context) {
+        rows.push({
+          id,
+          label: builtinLabel(id, _),
+          kind: 'builtin',
+          disabled: !contextTranslator,
+          reason: !hasPremium
+            ? _('Requires Readest Premium.')
+            : !contextTranslator
+              ? _('Add an OpenAI-compatible translator in Custom Translators to use it.')
+              : undefined,
         });
         continue;
       }
@@ -823,6 +880,116 @@ const CustomDictionaries: React.FC<CustomDictionariesProps> = ({ onBack }) => {
         </div>
       </div>
 
+      {appService?.isIOSApp && (
+        <BoxedList className='mt-4' title={_('System Dictionary')}>
+          <SettingsSwitchRow
+            label={_('Fullscreen')}
+            checked={settings.systemDictionaryFullscreen ?? false}
+            disabled={!dictionariesLoaded}
+            onChange={() => {
+              setSystemDictionaryFullscreen(!settings.systemDictionaryFullscreen);
+              void saveCustomDictionaries(envConfig);
+            }}
+          />
+        </BoxedList>
+      )}
+
+      {appService?.isAndroidApp && lookupApps.length > 0 && (
+        <BoxedList className='mt-4' title={_('System Dictionary')}>
+          <SettingsRow label={_('Lookup App')}>
+            <SettingsSelect
+              ariaLabel={_('Lookup App')}
+              value={selectedLookupApp ? lookupAppKey(selectedLookupApp) : ''}
+              onChange={handleLookupAppChange}
+              options={[
+                { value: '', label: _('Default') },
+                ...lookupApps.map((app) => ({ value: lookupAppKey(app), label: app.label })),
+              ]}
+            />
+          </SettingsRow>
+        </BoxedList>
+      )}
+
+      {contextTranslator && (
+        <BoxedList
+          className='mt-4'
+          title={_('Context Dictionary')}
+          description={_(
+            'Explains the selected text as it is used in the passage, in your translation target language.',
+          )}
+        >
+          <SettingsRow label={_('AI Translator')}>
+            <SettingsSelect
+              value={contextTranslator.id}
+              onChange={handleContextTranslatorChange}
+              options={llmTranslators.map((t) => ({ value: t.id, label: t.name }))}
+              ariaLabel={_('AI Translator')}
+            />
+          </SettingsRow>
+          <SettingsRow label={_('Prompt')}>
+            <SettingsSelect
+              value={contextPromptId}
+              onChange={(event) => {
+                setContextOptions({ contextPromptId: event.target.value });
+                void saveCustomDictionaries(envConfig);
+              }}
+              options={[
+                { value: 'default', label: _('Default') },
+                ...prompts.map((p) => ({ value: p.id, label: p.name })),
+                { value: 'custom', label: _('Custom Instructions') },
+              ]}
+              ariaLabel={_('Prompt')}
+            />
+          </SettingsRow>
+          {contextPromptId === 'custom' && (
+            <div className='space-y-2 py-3 pe-4'>
+              <label htmlFor='context-dictionary-instructions' className='block font-medium'>
+                {_('Dictionary Instructions')}
+              </label>
+              <textarea
+                id='context-dictionary-instructions'
+                className='textarea eink-bordered border-base-300 bg-base-100 w-full rounded-lg border text-sm'
+                rows={7}
+                value={settings.contextSystemPrompt ?? ''}
+                placeholder={_(
+                  'Explain the selected text in {{targetLang}}. Focus on historical context and word origins. Skip examples and synonyms.',
+                )}
+                onChange={(event) => {
+                  setContextOptions({ contextSystemPrompt: event.target.value });
+                  void saveCustomDictionaries(envConfig);
+                }}
+              />
+              <p className='text-base-content/65 text-[0.8em] leading-relaxed'>
+                {_(
+                  'The selected text, surrounding passage, book title, and author are included automatically. Leave blank to use the default prompt.',
+                )}
+              </p>
+              <p className='text-base-content/65 break-words text-[0.8em] leading-relaxed'>
+                {_('Variables:')}{' '}
+                <code>{'{{sourceLang}}, {{targetLang}}, {{bookTitle}}, {{bookAuthor}}'}</code>
+              </p>
+            </div>
+          )}
+          <SettingsRow label={_('Maximum Output Tokens')}>
+            <SettingsInput
+              type='number'
+              min={1}
+              step={1}
+              aria-label={_('Maximum Output Tokens')}
+              placeholder={_('Provider Default')}
+              value={settings.contextMaxOutputTokens || ''}
+              onChange={(event) => {
+                const value = Number(event.target.value);
+                if (!event.target.value || (Number.isSafeInteger(value) && value > 0)) {
+                  setContextOptions({ contextMaxOutputTokens: value });
+                  void saveCustomDictionaries(envConfig);
+                }
+              }}
+            />
+          </SettingsRow>
+        </BoxedList>
+      )}
+
       <BoxedList
         className='mt-4'
         title={_('Appearance')}
@@ -849,6 +1016,18 @@ const CustomDictionaries: React.FC<CustomDictionariesProps> = ({ onBack }) => {
           label={_('Auto-play Pronunciation')}
           checked={settings.autoPlayPronunciation ?? false}
           onChange={() => void handleAutoPlayPronunciationChange(!settings.autoPlayPronunciation)}
+        />
+      </BoxedList>
+
+      <BoxedList
+        className='mt-4'
+        title={_('Vocabulary')}
+        description={_('Keeps each looked-up word with its sentence for review and export.')}
+      >
+        <SettingsSwitchRow
+          label={_('Save Looked-up Words')}
+          checked={settings.saveLookupsToVocabulary ?? true}
+          onChange={() => void handleSaveLookupsChange(!(settings.saveLookupsToVocabulary ?? true))}
         />
       </BoxedList>
 
@@ -927,33 +1106,6 @@ const CustomDictionaries: React.FC<CustomDictionariesProps> = ({ onBack }) => {
           <span className='line-clamp-1'>{_('Add Web Search')}</span>
         </button>
       </div>
-
-      {/* Reset the remembered system-lookup app. Only rendered on Android
-          when a dictionary has actually been remembered from the
-          browser-excluding chooser (issue #4559), so the user can switch
-          to another installed dictionary without uninstalling. */}
-      {rememberedLookupApp && (
-        <div
-          className={clsx(
-            'eink-bordered mt-4 flex items-center justify-between gap-3',
-            'border-base-200 bg-base-100 rounded-lg border px-4 py-3',
-          )}
-        >
-          <div className='min-w-0'>
-            <div className='text-base-content text-sm font-medium'>{_('System Lookup App')}</div>
-            <div className='text-base-content/60 line-clamp-1 text-xs'>
-              {rememberedLookupApp.label}
-            </div>
-          </div>
-          <button
-            type='button'
-            onClick={handleResetLookupApp}
-            className='btn btn-ghost btn-sm eink-bordered shrink-0'
-          >
-            {_('Reset')}
-          </button>
-        </div>
-      )}
 
       <Tips className='mt-4'>
         <li>{_('StarDict bundles need .ifo, .idx, and .dict.dz files (.syn optional).')}</li>

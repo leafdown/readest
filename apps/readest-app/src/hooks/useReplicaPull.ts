@@ -18,6 +18,12 @@ import {
 } from '@/store/customTextureStore';
 import { useCustomOPDSStore, findOPDSCatalogByContentId } from '@/store/customOPDSStore';
 import { useABSServerStore } from '@/store/absServerStore';
+import {
+  useCustomTranslatorStore,
+  findCustomTranslator,
+  findTranslationPrompt,
+} from '@/store/customTranslatorStore';
+import { useCustomTTSStore, findCustomTTSService } from '@/store/customTTSStore';
 import { transferManager } from '@/services/transferManager';
 import { getReplicaSync, subscribeReplicaSyncReady } from '@/services/sync/replicaSync';
 import { dictionaryAdapter } from '@/services/sync/adapters/dictionary';
@@ -25,6 +31,11 @@ import { fontAdapter } from '@/services/sync/adapters/font';
 import { textureAdapter } from '@/services/sync/adapters/texture';
 import { opdsCatalogAdapter } from '@/services/sync/adapters/opdsCatalog';
 import { absServerAdapter } from '@/services/sync/adapters/absServer';
+import {
+  customTranslatorAdapter,
+  translationPromptAdapter,
+} from '@/services/sync/adapters/customTranslator';
+import { customTTSAdapter } from '@/services/sync/adapters/customTTS';
 import { settingsAdapter, type SettingsRemoteRecord } from '@/services/sync/adapters/settings';
 import {
   applyRemoteSettings,
@@ -51,6 +62,8 @@ import type { CustomFont } from '@/styles/fonts';
 import type { CustomTexture } from '@/styles/textures';
 import type { OPDSCatalog } from '@/types/opds';
 import type { ABSServer } from '@/types/audiobookshelf';
+import type { CustomTranslator, TranslationPrompt } from '@/types/translation';
+import type { CustomTTSService } from '@/types/customTTS';
 import type { Hlc, ReplicaRow } from '@/types/replica';
 import type { SystemSettings } from '@/types/settings';
 
@@ -60,6 +73,9 @@ export type ReplicaKind =
   | 'texture'
   | 'opds_catalog'
   | 'abs_server'
+  | 'custom_translator'
+  | 'translation_prompt'
+  | 'custom_tts'
   | 'settings'
   | 'bookshelf';
 
@@ -229,8 +245,9 @@ const dictionaryPullConfig: ReplicaPullConfig<ImportedDictionary> = {
   // would write back only the just-applied rows and clobber every
   // persisted dict that hadn't been hydrated by an Annotator/Settings
   // mount. Library-page refreshes were the visible victim.
-  hydrateLocalStore: (envConfig) =>
-    useCustomDictionaryStore.getState().loadCustomDictionaries(envConfig),
+  hydrateLocalStore: async (envConfig) => {
+    await useCustomDictionaryStore.getState().loadCustomDictionaries(envConfig);
+  },
   applyRemote: (dict) => useCustomDictionaryStore.getState().applyRemoteDictionary(dict),
   softDeleteByContentId: (id) => useCustomDictionaryStore.getState().softDeleteByContentId(id),
 };
@@ -283,6 +300,40 @@ const absServerPullConfig: ReplicaPullConfig<ABSServer> = {
   hydrateLocalStore: (envConfig) => useABSServerStore.getState().loadABSServers(envConfig),
   applyRemote: (server) => useABSServerStore.getState().applyRemoteServer(server),
   softDeleteByContentId: (id) => useABSServerStore.getState().softDeleteByContentId(id),
+};
+
+// Translators and prompts persist together, so both hydrate the same store.
+const hydrateCustomTranslators = (envConfig: EnvConfigType) =>
+  useCustomTranslatorStore.getState().loadCustomTranslators(envConfig);
+
+const customTranslatorPullConfig: ReplicaPullConfig<CustomTranslator> = {
+  kind: 'custom_translator',
+  // metadata-only — no baseDir
+  adapter: customTranslatorAdapter,
+  findByContentId: findCustomTranslator,
+  hydrateLocalStore: hydrateCustomTranslators,
+  applyRemote: (t) => useCustomTranslatorStore.getState().applyRemoteTranslator(t),
+  softDeleteByContentId: (id) => useCustomTranslatorStore.getState().softDeleteTranslator(id),
+};
+
+const translationPromptPullConfig: ReplicaPullConfig<TranslationPrompt> = {
+  kind: 'translation_prompt',
+  // metadata-only — no baseDir
+  adapter: translationPromptAdapter,
+  findByContentId: findTranslationPrompt,
+  hydrateLocalStore: hydrateCustomTranslators,
+  applyRemote: (p) => useCustomTranslatorStore.getState().applyRemotePrompt(p),
+  softDeleteByContentId: (id) => useCustomTranslatorStore.getState().softDeletePrompt(id),
+};
+
+const customTTSPullConfig: ReplicaPullConfig<CustomTTSService> = {
+  kind: 'custom_tts',
+  // metadata-only — no baseDir
+  adapter: customTTSAdapter,
+  findByContentId: findCustomTTSService,
+  hydrateLocalStore: (envConfig) => useCustomTTSStore.getState().loadCustomTTSServices(envConfig),
+  applyRemote: (s) => useCustomTTSStore.getState().applyRemoteService(s),
+  softDeleteByContentId: (id) => useCustomTTSStore.getState().softDeleteService(id),
 };
 
 const settingsPullConfig = (envConfig: EnvConfigType): ReplicaPullConfig<SettingsRemoteRecord> => ({
@@ -402,6 +453,42 @@ const runPullForKind = async (
           service,
           envConfig,
           absServerPullConfig,
+          pullOpts,
+          pullOverride,
+        ),
+      );
+      return;
+    case 'custom_translator':
+      await replicaPullAndApply(
+        buildReplicaPullDeps(
+          ctx.manager,
+          service,
+          envConfig,
+          customTranslatorPullConfig,
+          pullOpts,
+          pullOverride,
+        ),
+      );
+      return;
+    case 'translation_prompt':
+      await replicaPullAndApply(
+        buildReplicaPullDeps(
+          ctx.manager,
+          service,
+          envConfig,
+          translationPromptPullConfig,
+          pullOpts,
+          pullOverride,
+        ),
+      );
+      return;
+    case 'custom_tts':
+      await replicaPullAndApply(
+        buildReplicaPullDeps(
+          ctx.manager,
+          service,
+          envConfig,
+          customTTSPullConfig,
           pullOpts,
           pullOverride,
         ),

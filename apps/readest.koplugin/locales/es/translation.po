@@ -185,6 +185,12 @@ msgstr "¿Eliminar este libro de la nube y del dispositivo?"
 msgid "Remove"
 msgstr "Eliminar"
 
+msgid "Remove from Library, Keep File"
+msgstr "Quitar de la biblioteca, conservar archivo"
+
+msgid "Remove this book from your library and the cloud? The file stays on this device."
+msgstr "¿Quitar este libro de tu biblioteca y de la nube? El archivo se queda en este dispositivo."
+
 msgid "Remove from Cloud Only"
 msgstr "Eliminar solo de la nube"
 
@@ -287,14 +293,14 @@ msgstr "Ningún libro abierto"
 msgid "Uploaded to Readest:"
 msgstr "Subido a Readest:"
 
+msgid "Auto sync"
+msgstr "Sincronización automática"
+
 msgid "Log in Readest Account"
 msgstr "Iniciar sesión en la cuenta Readest"
 
 msgid "Log out as %1"
 msgstr "Cerrar sesión de %1"
-
-msgid "Auto sync"
-msgstr "Sincronización automática"
 
 msgid "Readest library"
 msgstr "Biblioteca de Readest"
@@ -337,9 +343,6 @@ msgstr "Buscar actualización"
 
 msgid "Please login first"
 msgstr "Por favor inicia sesión primero"
-
-msgid "Please configure Readest settings first"
-msgstr "Configura primero los ajustes de Readest"
 
 msgid "(none)"
 msgstr "(ninguno)"
@@ -506,9 +509,6 @@ msgstr "Sincronización completa: obteniendo todas las anotaciones…"
 msgid "Pulling annotations..."
 msgstr "Obteniendo anotaciones…"
 
-msgid "Authentication failed, please login again"
-msgstr "Error de autenticación, inicia sesión de nuevo"
-
 msgid "Failed to pull annotations"
 msgstr "Error al obtener las anotaciones"
 
@@ -521,11 +521,17 @@ msgstr "%1 anotaciones obtenidas"
 msgid "Your Readest session has expired. Please log in again."
 msgstr "Tu sesión de Readest ha caducado. Inicia sesión de nuevo."
 
+msgid "Authentication failed, please login again"
+msgstr "Error de autenticación, inicia sesión de nuevo"
+
 msgid "Login"
 msgstr "Iniciar sesión"
 
 msgid "Please enter both email and password"
 msgstr "Introduce el correo y la contraseña"
+
+msgid "Sign in with a code"
+msgstr "Iniciar sesión con un código"
 
 msgid "Please configure Supabase URL and API key first"
 msgstr "Configura primero la URL de Supabase y la clave API"
@@ -533,11 +539,17 @@ msgstr "Configura primero la URL de Supabase y la clave API"
 msgid "Logging in..."
 msgstr "Iniciando sesión…"
 
+msgid "Login failed: %1"
+msgstr "Error al iniciar sesión: %1"
+
 msgid "Successfully logged in to Readest"
 msgstr "Sesión iniciada en Readest correctamente"
 
-msgid "Login failed: %1"
-msgstr "Error al iniciar sesión: %1"
+msgid "Scan the QR code with a phone signed in to Readest, or open %1 and enter this code:\n\n%2"
+msgstr "Escanea el código QR con un teléfono con sesión iniciada en Readest, o abre %1 e introduce este código:\n\n%2"
+
+msgid "The code expired. Please try again."
+msgstr "El código ha caducado. Inténtalo de nuevo."
 
 msgid "Logged out from Readest"
 msgstr "Sesión cerrada de Readest"
@@ -566,8 +578,65 @@ msgstr "Error al obtener el progreso de lectura"
 msgid "Reading progress synchronized"
 msgstr "Progreso de lectura sincronizado"
 
+msgid "Saved reading position cannot be used with this copy of the book"
+msgstr "La posición de lectura guardada no se puede usar con esta copia del libro"
+
 msgid "No saved reading progress found for this book"
 msgstr "No se encontró progreso de lectura guardado para este libro"
+
+msgid "Sync was cancelled."
+msgstr "Sincronización cancelada."
+
+msgid "The connection timed out. Please try again."
+msgstr "Se agotó el tiempo de conexión. Inténtalo de nuevo."
+
+msgid "The network is unreachable. Please check the internet connection."
+msgstr "La red no está disponible. Comprueba la conexión a Internet."
+
+msgid "The server could not be found. Please check the internet connection."
+msgstr "No se encontró el servidor. Comprueba la conexión a Internet."
+
+msgid "The server refused the connection. Please try again later."
+msgstr "El servidor rechazó la conexión. Inténtalo más tarde."
+
+msgid "The connection was interrupted. Please try again."
+msgstr "La conexión se interrumpió. Inténtalo de nuevo."
+
+msgid "A secure connection to the server could not be established."
+msgstr "No se pudo establecer una conexión segura con el servidor."
+
+msgid "Authentication failed. Please log in again."
+msgstr "Error de autenticación. Vuelve a iniciar sesión."
+
+msgid "The account changed during sync."
+msgstr "La cuenta cambió durante la sincronización."
+
+msgid "The file was not found in the cloud."
+msgstr "No se encontró el archivo en la nube."
+
+msgid "The local file is missing."
+msgstr "Falta el archivo local."
+
+msgid "An internal error occurred. Please try again."
+msgstr "Se produjo un error interno. Inténtalo de nuevo."
+
+msgid "Access denied."
+msgstr "Acceso denegado."
+
+msgid "Not found on the server."
+msgstr "No se encontró en el servidor."
+
+msgid "The file is too large."
+msgstr "El archivo es demasiado grande."
+
+msgid "Too many requests. Please try again later."
+msgstr "Demasiadas solicitudes. Inténtalo más tarde."
+
+msgid "The server is temporarily unavailable. Please try again later."
+msgstr "El servidor no está disponible temporalmente. Inténtalo más tarde."
+
+msgid "The request failed. Please try again."
+msgstr "La solicitud falló. Inténtalo de nuevo."
 
 msgid "Reading statistics are up to date"
 msgstr "Las estadísticas de lectura están actualizadas"

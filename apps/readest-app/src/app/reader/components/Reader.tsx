@@ -24,6 +24,8 @@ import { mountAdditionalFonts } from '@/styles/fonts';
 import { isTauriAppPlatform } from '@/services/environment';
 import { getSysFontsList, setSystemUIVisibility } from '@/utils/bridge';
 import { AboutWindow } from '@/components/AboutWindow';
+import ReadingStatsDialog from '@/components/stats/ReadingStatsDialog';
+import { VocabularyDialog } from '@/components/vocabulary/VocabularyDialog';
 import { KeyboardShortcutsHelp } from '@/components/KeyboardShortcutsHelp';
 import { UpdaterWindow } from '@/components/UpdaterWindow';
 import { ProofreadRulesManager } from './ProofreadRules';
@@ -68,7 +70,7 @@ const Reader: React.FC<{ ids?: string }> = ({ ids }) => {
   const { getIsNotebookVisible, setNotebookVisible } = useNotebookStore();
   const { isDarkMode, systemUIAlwaysHidden, isRoundedWindow } = useThemeStore();
 
-  useTheme({
+  const { onUpdateInsets } = useTheme({
     systemUIVisible: settings.alwaysShowStatusBar,
     appThemeColor: 'base-100',
     themeScope: 'reader',
@@ -142,7 +144,12 @@ const Reader: React.FC<{ ids?: string }> = ({ ids }) => {
     if (!appService?.isMobileApp) return;
     const systemUIVisible = !!hoveredBookKey || settings.alwaysShowStatusBar;
     const visible = !!(systemUIVisible && !systemUIAlwaysHidden);
-    setSystemUIVisibility({ visible, darkMode: isDarkMode });
+    setSystemUIVisibility({ visible, darkMode: isDarkMode }).then(() => {
+      // iPhone Duo's status bar carries a side inset of its own (its strip):
+      // re-read it so the toolbar chrome clears the strip. Other devices never
+      // re-read here.
+      if (useThemeStore.getState().isIPhoneDuo) onUpdateInsets();
+    });
     if (visible) {
       showSystemUI();
     } else {
@@ -161,6 +168,8 @@ const Reader: React.FC<{ ids?: string }> = ({ ids }) => {
       <Suspense fallback={<div className='full-height'></div>}>
         <ReaderContent ids={ids} settings={settings} />
         <AboutWindow />
+        <ReadingStatsDialog />
+        <VocabularyDialog />
         <KeyboardShortcutsHelp />
         <UpdaterWindow />
         <ProofreadRulesManager />

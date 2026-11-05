@@ -38,7 +38,6 @@ import { CommandPaletteProvider, CommandPalette } from '@/components/command-pal
 import AtmosphereOverlay from '@/components/AtmosphereOverlay';
 import AppLockScreen from '@/components/AppLockScreen';
 import CarMediaLibraryBridge from '@/components/CarMediaLibraryBridge';
-import FileSyncReport from '@/components/FileSyncReport';
 import AppLockDialog from '@/components/settings/AppLockDialog';
 import PassphrasePrompt from '@/components/PassphrasePrompt';
 import TelemetryConsentDialog from '@/components/TelemetryConsentDialog';
@@ -151,6 +150,24 @@ const Providers = ({ children }: { children: React.ReactNode }) => {
     loadDataTheme();
     if (appService) {
       initSystemThemeListener(appService);
+      // Windows: the main window is created hidden and only mapped once the
+      // themed page is painted (the shell listens for this event) — see
+      // lib.rs. Other platforms ignore it.
+      import('@tauri-apps/api/event')
+        .then(({ emit }) => {
+          // Emit only after the themed frame has actually been painted
+          // (two rAFs = one full render). Hidden windows never fire rAF,
+          // so race a short fallback timer — beyond it, the page is
+          // painted anyway and emitting immediately is the pre-existing
+          // verified behavior.
+          const painted = new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          });
+          Promise.race([painted, new Promise<void>((r) => setTimeout(r, 100))]).then(() =>
+            emit('window-themed').catch(() => {}),
+          );
+        })
+        .catch(() => {});
       const hadSettingsFilePromise = appService.exists(SETTINGS_FILENAME, 'Settings');
       appService.loadSettings().then(async (settings) => {
         const globalViewSettings = settings.globalViewSettings;
@@ -256,7 +273,6 @@ const Providers = ({ children }: { children: React.ReactNode }) => {
                   <CommandPalette />
                   <AtmosphereOverlay />
                   <PassphrasePrompt />
-                  {!appShellHidden && <FileSyncReport />}
                   <WindowResizeHandles />
                 </div>
                 <AppLockDialog />

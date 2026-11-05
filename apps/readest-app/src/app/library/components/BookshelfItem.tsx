@@ -6,11 +6,13 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useLongPress } from '@/hooks/useLongPress';
 import { Menu, MenuItem } from '@tauri-apps/api/menu';
 import { LogicalPosition } from '@tauri-apps/api/dpi';
-import { revealItemInDir } from '@tauri-apps/plugin-opener';
+import { invoke } from '@tauri-apps/api/core';
 import { eventDispatcher } from '@/utils/event';
 import { openExternalUrl } from '@/utils/open';
 import { getBookGoodreadsQuery, getGoodreadsSearchUrl } from '@/utils/goodreads';
 import { getOSPlatform } from '@/utils/misc';
+import { getBookPageCount, getSeriesIndex } from '@/utils/book';
+import { isAudiobook } from '@/utils/audiobook';
 import { throttle } from '@/utils/throttle';
 import { buildDownloadLadder, isCalibreBook } from '@/utils/calibre';
 import { LibraryCoverFitType, LibraryViewModeType } from '@/types/settings';
@@ -87,6 +89,7 @@ interface BookshelfItemProps {
   item: Book | BooksGroup;
   coverFit: LibraryCoverFitType;
   skeuomorphicCovers?: boolean;
+  showPageCount?: boolean;
   isSelectMode: boolean;
   itemSelected: boolean;
   transferProgress: number | null;
@@ -104,6 +107,7 @@ interface BookshelfItemProps {
   handleLibraryNavigation: (targetGroup: string) => void;
   handleUpdateReadingStatus: (book: Book, status: ReadingStatus | undefined) => void;
   showTimeRemaining: boolean;
+  showSeriesIndex?: boolean;
 }
 
 const BookshelfItem: React.FC<BookshelfItemProps> = ({
@@ -111,6 +115,7 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
   item,
   coverFit,
   skeuomorphicCovers,
+  showPageCount,
   isSelectMode,
   itemSelected,
   transferProgress,
@@ -124,6 +129,7 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
   handleLibraryNavigation,
   handleUpdateReadingStatus,
   showTimeRemaining,
+  showSeriesIndex,
 }) => {
   const _ = useTranslation();
   const { appService } = useEnv();
@@ -218,7 +224,7 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
         text: _(fileRevealLabel),
         action: async () => {
           const folder = `${settings.localBooksDir}/${book.hash}`;
-          revealItemInDir(folder);
+          invoke('reveal_item_in_dir', { path: folder });
         },
       },
       searchGoodreads: {
@@ -458,6 +464,12 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
   // exact bookshelf cell the user is acting on without threading refs
   // through every parent. Books carry their content-hash; groups carry
   // their full group name.
+  const seriesIndex =
+    showSeriesIndex && mode === 'grid' && 'format' in item
+      ? getSeriesIndex(item.metadata?.seriesIndex)
+      : undefined;
+  const pageCount =
+    showPageCount && 'format' in item && !isAudiobook(item) ? getBookPageCount(item) : undefined;
   const itemDataAttrs =
     'format' in item ? { 'data-book-hash': item.hash } : { 'data-group-name': item.name };
 
@@ -474,7 +486,16 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
         )}
         role='button'
         tabIndex={0}
-        aria-label={'format' in item ? item.title : item.name}
+        aria-label={
+          'format' in item
+            ? [
+                seriesIndex !== undefined ? `${item.title} #${seriesIndex}` : item.title,
+                pageCount && _('{{count}} pages', { count: pageCount }),
+              ]
+                .filter(Boolean)
+                .join(', ')
+            : item.name
+        }
         style={{
           transition: 'transform 0.2s',
         }}
@@ -499,6 +520,8 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
               handleBookDownload={handleBookDownload}
               showBookDetailsModal={showBookDetailsModal}
               showTimeRemaining={showTimeRemaining}
+              seriesIndex={seriesIndex}
+              pageCount={pageCount}
             />
           ) : (
             <GroupItem
@@ -543,6 +566,8 @@ export default memo(
     prev.itemSelected === next.itemSelected &&
     prev.transferProgress === next.transferProgress &&
     prev.showTimeRemaining === next.showTimeRemaining &&
+    prev.showPageCount === next.showPageCount &&
+    prev.showSeriesIndex === next.showSeriesIndex &&
     prev.setLoading === next.setLoading &&
     prev.toggleSelection === next.toggleSelection &&
     prev.handleGroupBooks === next.handleGroupBooks &&

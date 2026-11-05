@@ -52,6 +52,20 @@ export const isCaselessLang = (lang: string | null | undefined): boolean => {
   ].includes(normalizedLang);
 };
 
+/**
+ * True when the active UI language uses a script with no upper/lower case
+ * distinction (CJK, Arabic-script, Hebrew, major Indic scripts, Thai,
+ * Tibetan). Use this to opt out of UI rules that depend on the `uppercase`
+ * CSS property for emphasis — those rules render as no-ops in caseless
+ * scripts and the affected text needs alternate visual weight (typically a
+ * larger font-size). Reads the active i18next locale from localStorage and
+ * falls back to navigator.language.
+ */
+export const isCaselessUILang = () => {
+  const uiLanguage = localStorage?.getItem('i18nextLng') || navigator.language || '';
+  return isCaselessLang(uiLanguage);
+};
+
 const ZH_SCRIPTS_MAPPING: Record<string, string> = {
   zh: 'zh-Hans',
   'zh-cn': 'zh-Hans',
@@ -163,12 +177,23 @@ export const detectLanguage = (content: string): string => {
   }
 };
 
+// A PDF rarely declares a language, and its text layer is always tagged `en`, so
+// Read Aloud picks the voice from the page being read. Short pages (a cover, a
+// heading) are left alone: too little text to tell English from its neighbours.
+export const getPDFSpeechLang = (primaryLang: string | undefined, pageText: string): string => {
+  if (isValidLang(primaryLang) && !['en', 'eng'].includes(normalizedLangCode(primaryLang))) {
+    return primaryLang!;
+  }
+  const text = pageText.replace(/\s+/g, ' ').trim();
+  return text.length >= 100 ? detectLanguage(text) : 'en';
+};
+
 export const getLanguageInfo = (lang: string) => {
   if (!lang) return {};
   try {
     const canonical = Intl.getCanonicalLocales(lang)[0]!;
     const locale = new Intl.Locale(canonical) as LocaleWithTextInfo;
-    const isCJK = ['zh', 'ja', 'kr'].includes(locale.language);
+    const isCJK = ['zh', 'ja', 'ko'].includes(locale.language);
     const direction = (locale.getTextInfo?.() ?? locale.textInfo)?.direction;
     return { canonical, locale, isCJK, direction };
   } catch (e) {

@@ -1,3 +1,4 @@
+import type { InkTool } from '@/services/handwriting/model';
 import type { BookshelfState } from './bookshelf';
 import { CustomTheme } from '@/styles/themes';
 import { CustomFont } from '@/styles/fonts';
@@ -7,7 +8,10 @@ import { OPDSCatalog } from './opds';
 import { WebSource } from './webSource';
 import { ABSServer } from './audiobookshelf';
 import type { CalibreServer } from './calibre';
+import type { CustomTranslator, TranslationPrompt } from './translation';
+import type { CustomTTSService } from './customTTS';
 import type { AISettings } from '@/services/ai/types';
+import type { CoverSearchEngine } from '@/services/metadata/coverSearch';
 import type { NotebookTab } from '@/store/notebookStore';
 import type { DictionarySettings, ImportedDictionary } from '@/services/dictionaries/types';
 
@@ -23,6 +27,7 @@ export const LibrarySortByType = {
   Format: 'format',
   Published: 'published',
   Progress: 'progress',
+  Pages: 'pages',
   TimeRemaining: 'timeRemaining',
   Rating: 'rating',
 } as const;
@@ -77,6 +82,14 @@ export interface ReadSettings {
   defaultHighlightLabels: Partial<Record<HighlightColor, string>>;
   customTtsHighlightColors: string[];
   customThemes: CustomTheme[];
+
+  /** Ink color and pen width for the handwriting tool, remembered per install. */
+  handwritingColor: string;
+  handwritingWidth: number;
+  /** The drawing tool last used, and the marker's own color and width. */
+  handwritingTool: InkTool;
+  handwritingMarkerColor: string;
+  handwritingMarkerWidth: number;
 }
 
 export interface KOSyncSettings {
@@ -98,6 +111,12 @@ export interface KOSyncSettings {
    * Off by default, matching KOReader.
    */
   sendMetadata?: boolean;
+  /**
+   * Accept a self-signed or mismatched TLS certificate from this server on
+   * native requests. Unset on settings saved before the option existed, which
+   * keep accepting them; see `allowsSelfSignedCert`.
+   */
+  allowSelfSignedCert?: boolean;
 }
 
 export interface BookOrbitSettings {
@@ -125,6 +144,30 @@ export interface BookOrbitSettings {
    * option existed keep the automatic pushes they already had.
    */
   autoSync?: boolean;
+  /**
+   * Accept a self-signed or mismatched TLS certificate from this server on
+   * native requests. Unset on settings saved before the option existed, which
+   * keep accepting them; see `allowsSelfSignedCert`.
+   */
+  allowSelfSignedCert?: boolean;
+}
+
+export interface GrimmorySettings {
+  enabled: boolean;
+  /** Base server origin, e.g. https://books.example.com (no /api path). */
+  serverUrl: string;
+  username: string;
+  /** Kept to sign in again once the server's refresh token runs out. */
+  password: string;
+  strategy: KOSyncStrategy;
+  syncProgress: boolean;
+  /** Highlights, notes and bookmarks. */
+  syncNotes: boolean;
+  syncStats: boolean;
+  syncBookStates: boolean;
+  customHeaders?: Record<string, string>;
+  /** Unset means accepted, as for the other servers; see `allowsSelfSignedCert`. */
+  allowSelfSignedCert?: boolean;
 }
 
 export interface ReadwiseSettings {
@@ -146,11 +189,26 @@ export interface ReadwiseSettings {
 
 export interface HardcoverSettings {
   enabled: boolean;
+  /** Pasted API token; empty when signed in with OAuth. */
   accessToken: string;
+  /** Device-local OAuth session; not synced (short-lived, refresh token rotates). */
+  oauth?: { accessToken: string; refreshToken?: string; expiresAt: number };
   lastSyncedAt: number;
   // When true, progress + notes are pushed to Hardcover automatically as the
   // user reads (debounced) instead of only via the reader menu. Default OFF;
   // existing connected users (undefined) stay manual until they opt in.
+  autoSync?: boolean;
+}
+
+export interface PageboundSettings {
+  enabled: boolean;
+  /** Display only: the account the session belongs to. */
+  email: string;
+  /** Firebase refresh token; Pagebound has no API tokens or OAuth. */
+  refreshToken: string;
+  /** Pagebound's own API token, exchanged from a Firebase id token. */
+  apiToken: string;
+  lastSyncedAt: number;
   autoSync?: boolean;
 }
 
@@ -167,6 +225,21 @@ export interface NotionSettings {
   lastSyncedAt: number;
   /** Append a chapter heading block before each highlight (default ON). */
   includeChapterHeading?: boolean;
+  /** Render each note through `customTemplate` instead of the built-in layout. */
+  useCustomTemplate?: boolean;
+  /** Nunjucks template rendering one note as Markdown, converted to Notion blocks. */
+  customTemplate?: string;
+}
+
+/**
+ * Writes each book's highlights into a Markdown note in an Obsidian vault
+ * folder (#7061). Per device: the folder is a local path, so this slice is
+ * not in the synced settings allowlist.
+ */
+export interface ObsidianSettings {
+  enabled: boolean;
+  /** Absolute path of the vault folder the book notes go into. */
+  folder: string;
 }
 
 /**
@@ -336,7 +409,8 @@ export interface ReadestCloudSettings {
  * User-facing sync categories. 'progress' gates the existing book-config
  * (reading progress) sync, 'note' gates annotations, 'book' gates book
  * binaries + metadata, 'dictionary' gates the imported-dictionary replica
- * sync. 'credentials' is a meta-toggle that gates the encrypted-credential
+ * sync. 'book_data' gates a book's synced data files (downloaded read-aloud
+ * audio, later translations). 'credentials' is a meta-toggle that gates the encrypted-credential
  * fields (OPDS username/password, KOSync credentials, Readwise / Hardcover
  * tokens) across whichever replica kinds carry them. Adding a new replica
  * kind extends this union.
@@ -345,26 +419,34 @@ export type SyncCategory =
   | 'book'
   | 'progress'
   | 'note'
+  | 'book_data'
   | 'dictionary'
   | 'font'
   | 'texture'
   | 'opds_catalog'
   | 'abs_server'
+  | 'custom_translator'
+  | 'custom_tts'
   | 'settings'
   | 'credentials'
-  | 'stats';
+  | 'stats'
+  | 'vocabulary';
 
 export const SYNC_CATEGORIES: readonly SyncCategory[] = [
   'book',
   'progress',
   'note',
+  'book_data',
   'dictionary',
   'font',
   'texture',
   'opds_catalog',
   'abs_server',
+  'custom_translator',
+  'custom_tts',
   'settings',
   'stats',
+  'vocabulary',
   'credentials',
 ] as const;
 
@@ -510,8 +592,16 @@ export interface SystemSettings {
   absServers: ABSServer[];
   /** Configured Calibre content servers. Device-local in this settings file; synced books carry their own metadata. */
   calibreServers?: CalibreServer[];
+  /** User-configured translation backends; synced as `custom_translator`. */
+  customTranslators?: CustomTranslator[];
+  /** User translation prompts; synced as `translation_prompt`. */
+  translationPrompts?: TranslationPrompt[];
+  /** User OpenAI-compatible speech services; synced as `custom_tts`. */
+  customTTSServices?: CustomTTSService[];
   /** Saved sites for the "From Web Browser" import (#5775). Device-local. */
   webSources?: WebSource[];
+  /** Additional image-search engines for the cover editor. Device-local. */
+  coverSearchEngines?: CoverSearchEngine[];
   metadataSeriesCollapsed: boolean;
   metadataOthersCollapsed: boolean;
   metadataDescriptionCollapsed: boolean;
@@ -540,9 +630,12 @@ export interface SystemSettings {
 
   kosync: KOSyncSettings;
   bookorbit: BookOrbitSettings;
+  grimmory: GrimmorySettings;
   readwise: ReadwiseSettings;
   hardcover: HardcoverSettings;
+  pagebound: PageboundSettings;
   notion: NotionSettings;
+  obsidian: ObsidianSettings;
   /** Optional by design — see {@link ReadestCloudSettings}. Never defaulted. */
   readestCloud?: ReadestCloudSettings;
   webdav: WebDAVSettings;

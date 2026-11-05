@@ -1,6 +1,7 @@
 import clsx from 'clsx';
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef } from 'react';
 import { MdEdit, MdDelete, MdContentCopy } from 'react-icons/md';
+import { PiBookmarkSimple, PiHighlighter, PiNotePencil, PiScribbleLoop } from 'react-icons/pi';
 
 import { useEnv } from '@/context/EnvContext';
 import { BookNote, HighlightColor } from '@/types/book';
@@ -10,11 +11,13 @@ import { useNotebookStore } from '@/store/notebookStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useResponsiveSize } from '@/hooks/useResponsiveSize';
+import { useLongPress } from '@/hooks/useLongPress';
 import { eventDispatcher } from '@/utils/event';
 import { isCfiInLocation } from '@/utils/cfi';
 import { buildAnnotationUrl } from '@/utils/deeplink';
 import { buildAnnotationCopyMarkdown } from '@/utils/note';
 import { writeTextToClipboard } from '@/utils/clipboard';
+import { nextBooknoteStamp } from '@/utils/booknoteStamp';
 import { DEFAULT_NOTE_EXPORT_CONFIG } from '@/services/constants';
 import { removeBookNoteOverlays } from '../../utils/annotatorUtil';
 import { parseNoteMarkdown } from '../../utils/noteMarkdown';
@@ -23,6 +26,14 @@ import { useInlineTextEditor } from '../../hooks/useInlineTextEditor';
 import TextButton from '@/components/TextButton';
 import TextEditor from '@/components/TextEditor';
 import { BooknoteTimeLabel } from './BooknoteTime';
+
+/** The icon and name that lead an item, by what it is. */
+const kindOf = (item: BookNote) => {
+  if (item.type === 'bookmark') return { label: 'Bookmark', Icon: PiBookmarkSimple };
+  if (item.type === 'ink') return { label: 'Drawing', Icon: PiScribbleLoop };
+  if (item.note) return { label: 'Note', Icon: PiNotePencil };
+  return { label: 'Highlight', Icon: PiHighlighter };
+};
 
 interface BooknoteItemProps {
   bookKey: string;
@@ -40,7 +51,7 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({
   inlineNoteEditing,
 }) => {
   const _ = useTranslation();
-  const { envConfig } = useEnv();
+  const { envConfig, appService } = useEnv();
   const { settings } = useSettingsStore();
   const { getConfig, saveConfig, updateBooknotes } = useBookDataStore();
   const { getProgress, getView, getViewsById, getViewSettings } = useReaderStore();
@@ -50,6 +61,8 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({
   const customColors = globalReadSettings.customHighlightColors;
 
   const { text, cfi, note } = item;
+  const kind = kindOf(item);
+  const kindIconSize = useResponsiveSize(12);
   const isBookmark = item.type === 'bookmark';
   const saveBooknoteNoteText = useSaveBooknoteNoteText(bookKey);
   const saveBookmarkText = (draftText: string) => {
@@ -58,7 +71,7 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({
     const { booknotes: annotations = [] } = config;
     const existingIndex = annotations.findIndex((annotation) => item.id === annotation.id);
     if (existingIndex === -1) return;
-    annotations[existingIndex]!.updatedAt = Date.now();
+    annotations[existingIndex]!.updatedAt = nextBooknoteStamp(annotations[existingIndex]!);
     annotations[existingIndex]!.text = draftText;
     const updatedConfig = updateBooknotes(bookKey, annotations);
     if (updatedConfig) {
@@ -88,8 +101,29 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({
   // item.note and bust the cache automatically.
   const noteHtml = useMemo(() => (note ? parseNoteMarkdown(note) : ''), [note]);
 
+  // iOS WebKit applies :hover at touchstart, so every scroll touch would expand
+  // the card under the finger (#6568). There a long press reveals the actions
+  // instead, and the click that iOS sends after it must not navigate.
+  const revealOnHover = !appService?.isIOSApp;
+  const itemRef = useRef<HTMLLIElement>(null);
+  const longPressedRef = useRef(false);
+  const { handlers: longPressHandlers } = useLongPress(
+    {
+      onLongPress: () => {
+        longPressedRef.current = true;
+        itemRef.current?.focus({ preventScroll: true });
+      },
+      threshold: 300,
+    },
+    [],
+  );
+
   const handleClickItem = (event: React.MouseEvent | React.KeyboardEvent) => {
     event.preventDefault();
+    if (event.type === 'click' && longPressedRef.current) {
+      longPressedRef.current = false;
+      return;
+    }
     eventDispatcher.dispatch('navigate', { bookKey, cfi });
 
     onClick?.();
@@ -103,7 +137,7 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({
     const { booknotes = [] } = config;
     booknotes.forEach((item) => {
       if (item.id === note.id) {
-        item.deletedAt = Date.now();
+        item.deletedAt = nextBooknoteStamp(item);
         const views = getViewsById(bookKey.split('-')[0]!);
         views.forEach((view) => removeBookNoteOverlays(view, item));
       }
@@ -193,6 +227,10 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({
 
   const isEditable =
     !!item.note || isBookmark || (!!inlineNoteEditing && item.type === 'annotation');
+  const actionButtonReveal = clsx(
+    'group-focus-within:opacity-100',
+    revealOnHover && 'group-hover:opacity-100',
+  );
 
   return (
     <li
@@ -206,8 +244,19 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({
           : 'hover:bg-base-300/55 focus:bg-base-300/55 bg-base-100',
         'transition-all duration-300 ease-in-out',
       )}
+      ref={itemRef}
       tabIndex={0}
       onClick={handleClickItem}
+      {...(!revealOnHover && {
+        onPointerDown: (e: React.PointerEvent) => {
+          longPressedRef.current = false;
+          longPressHandlers.onPointerDown(e);
+        },
+        onPointerMove: longPressHandlers.onPointerMove,
+        onPointerUp: longPressHandlers.onPointerUp,
+        onPointerCancel: longPressHandlers.onPointerCancel,
+        onPointerLeave: longPressHandlers.onPointerLeave,
+      })}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           handleClickItem(e);
@@ -216,58 +265,67 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({
         }
       }}
     >
-      <div
-        className={clsx('min-h-4 p-0 transition-all duration-300 ease-in-out')}
-        style={
-          {
-            '--top-override': '0.7rem',
-            '--end-override': '0.3rem',
-          } as React.CSSProperties
-        }
-      >
-        {item.note && (
-          <div
-            className='content prose prose-sm font-size-sm'
-            dir='auto'
-            dangerouslySetInnerHTML={{ __html: noteHtml }}
-          ></div>
-        )}
-        <div className='flex items-start'>
+      <div className='flex items-start gap-2'>
+        <span
+          role='img'
+          aria-label={_(kind.label)}
+          className='bg-base-content/10 text-base-content/60 flex h-5 w-5 shrink-0 items-center justify-center rounded-full'
+        >
+          <kind.Icon size={kindIconSize} aria-hidden='true' />
+        </span>
+        <div
+          className={clsx('min-h-4 min-w-0 flex-1 p-0 transition-all duration-300 ease-in-out')}
+          style={
+            {
+              '--top-override': '0.7rem',
+              '--end-override': '0.3rem',
+            } as React.CSSProperties
+          }
+        >
           {item.note && (
             <div
-              className='me-2 mt-2.5 min-h-full self-stretch rounded-xl bg-gray-300'
-              style={{
-                minWidth: `${separatorWidth}px`,
-              }}
+              className='content prose prose-sm font-size-sm'
+              dir='auto'
+              dangerouslySetInnerHTML={{ __html: noteHtml }}
             ></div>
           )}
-          <div className={clsx('content font-size-sm line-clamp-3', item.note && 'mt-2')}>
-            <span
-              className={clsx(
-                'booknote-text inline leading-normal',
-                item.note && 'content font-size-xs text-base-content',
-                (item.style === 'underline' || item.style === 'squiggly') &&
-                  'underline decoration-2',
-                item.style === 'highlight' && 'rounded-[4px] px-[2px] py-[1px]',
-                item.style === 'squiggly' && 'decoration-wavy',
-              )}
-              style={
-                {
-                  ...(item.style === 'highlight'
-                    ? {
-                        backgroundColor: `color-mix(in srgb, ${customColors[item.color as HighlightColor] || item.color} calc(var(--overlayer-highlight-opacity, 0.3) * 100%), transparent)`,
-                      }
-                    : {}),
-                  ...(item.style === 'underline' || item.style === 'squiggly'
-                    ? {
-                        textDecorationColor: `color-mix(in srgb, ${customColors[item.color as HighlightColor] || item.color} 80%, transparent)`,
-                      }
-                    : {}),
-                } as React.CSSProperties
-              }
-            >
-              {text || ''}
-            </span>
+          <div className='flex items-start'>
+            {item.note && (
+              <div
+                className='me-2 mt-2.5 min-h-full self-stretch rounded-xl bg-gray-300'
+                style={{
+                  minWidth: `${separatorWidth}px`,
+                }}
+              ></div>
+            )}
+            <div className={clsx('content font-size-sm line-clamp-3', item.note && 'mt-2')}>
+              <span
+                className={clsx(
+                  'booknote-text inline leading-normal',
+                  item.note && 'content font-size-xs text-base-content',
+                  (item.style === 'underline' || item.style === 'squiggly') &&
+                    'underline decoration-2',
+                  item.style === 'highlight' && 'rounded-[4px] px-[2px] py-[1px]',
+                  item.style === 'squiggly' && 'decoration-wavy',
+                )}
+                style={
+                  {
+                    ...(item.style === 'highlight'
+                      ? {
+                          backgroundColor: `color-mix(in srgb, ${customColors[item.color as HighlightColor] || item.color} calc(var(--overlayer-highlight-opacity, 0.3) * 100%), transparent)`,
+                        }
+                      : {}),
+                    ...(item.style === 'underline' || item.style === 'squiggly'
+                      ? {
+                          textDecorationColor: `color-mix(in srgb, ${customColors[item.color as HighlightColor] || item.color} 80%, transparent)`,
+                        }
+                      : {}),
+                  } as React.CSSProperties
+                }
+              >
+                {text || (item.type === 'ink' ? _('Drawing') : '')}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -276,10 +334,10 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({
         className={clsx(
           'max-h-0 overflow-hidden p-0',
           'transition-[max-height] duration-300 ease-in-out',
-          'group-focus-within:overflow-visible group-hover:overflow-visible',
-          isEditable
-            ? 'group-focus-within:max-h-12 group-hover:max-h-12'
-            : 'group-focus-within:max-h-8 group-hover:max-h-8',
+          'group-focus-within:overflow-visible',
+          isEditable ? 'group-focus-within:max-h-12' : 'group-focus-within:max-h-8',
+          revealOnHover && 'group-hover:overflow-visible',
+          revealOnHover && (isEditable ? 'group-hover:max-h-12' : 'group-hover:max-h-8'),
         )}
         style={
           {
@@ -307,7 +365,10 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({
           >
             <button
               onClick={handleCopyLink}
-              className='btn btn-ghost btn-xs text-base-content p-0 opacity-0 transition duration-300 ease-in-out hover:border-transparent hover:bg-transparent group-focus-within:opacity-100 group-hover:opacity-100'
+              className={clsx(
+                'btn btn-ghost btn-xs text-base-content p-0 opacity-0 transition duration-300 ease-in-out hover:border-transparent hover:bg-transparent',
+                actionButtonReveal,
+              )}
               aria-label={_('Copy')}
             >
               <MdContentCopy size={size18} />
@@ -315,7 +376,10 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({
 
             <button
               onClick={deleteNote.bind(null, item)}
-              className='btn btn-ghost btn-xs p-0 text-red-500 opacity-0 transition duration-300 ease-in-out hover:border-transparent hover:bg-transparent group-focus-within:opacity-100 group-hover:opacity-100'
+              className={clsx(
+                'btn btn-ghost btn-xs p-0 text-red-500 opacity-0 transition duration-300 ease-in-out hover:border-transparent hover:bg-transparent',
+                actionButtonReveal,
+              )}
               aria-label={_('Delete')}
             >
               <MdDelete size={size18} />
@@ -330,7 +394,10 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({
                       ? editNoteInline
                       : editNote.bind(null, item)
                 }
-                className='btn btn-ghost btn-xs p-0 text-blue-500 opacity-0 transition duration-300 ease-in-out hover:border-transparent hover:bg-transparent group-focus-within:opacity-100 group-hover:opacity-100'
+                className={clsx(
+                  'btn btn-ghost btn-xs p-0 text-blue-500 opacity-0 transition duration-300 ease-in-out hover:border-transparent hover:bg-transparent',
+                  actionButtonReveal,
+                )}
                 aria-label={item.note || item.type === 'bookmark' ? _('Edit') : _('Add Note')}
               >
                 <MdEdit size={size18} />

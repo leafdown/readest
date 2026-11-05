@@ -132,16 +132,29 @@ fn is_within_app_storage(file_path: &Path, roots: &[PathBuf]) -> bool {
     roots.iter().any(|root| file_path.starts_with(root))
 }
 
+/// A custom data location keeps every file beneath a folder named `Readest`,
+/// which the `**/Readest/**/*` fs capability already grants to the fs plugin.
+/// Match a whole path component so `Readest-agent.plist` stays foreign.
+fn is_within_data_dir(file_path: &Path) -> bool {
+    file_path.components().any(|c| c.as_os_str() == "Readest")
+}
+
+/// Refuse `..` before resolving, so neither traversal nor a symlink can carry
+/// a path out of the folder its spelling names.
+fn resolve_request(file_path: &str) -> std::result::Result<PathBuf, Error> {
+    if has_disallowed_components(file_path) {
+        return Err(Error::Forbidden(file_path.to_string()));
+    }
+    Ok(resolve_path(Path::new(file_path))?)
+}
+
 /// Authorize the resolved path against user grants or real application roots.
 /// Callers use the returned path for I/O, never the untrusted spelling.
 pub(crate) fn ensure_path_allowed<R: tauri::Runtime>(
     app: &AppHandle<R>,
     file_path: &str,
 ) -> std::result::Result<PathBuf, Error> {
-    if has_disallowed_components(file_path) {
-        return Err(Error::Forbidden(file_path.to_string()));
-    }
-    let resolved = resolve_path(Path::new(file_path))?;
+    let resolved = resolve_request(file_path)?;
     let scope = app.fs_scope();
     if scope.is_forbidden(&resolved) {
         return Err(Error::Forbidden(file_path.to_string()));
@@ -155,7 +168,10 @@ pub(crate) fn ensure_path_allowed<R: tauri::Runtime>(
     .into_iter()
     .filter_map(|root| root.ok().and_then(|root| resolve_path(&root).ok()))
     .collect();
-    if scope.is_allowed(&resolved) || is_within_app_storage(&resolved, &roots) {
+    if scope.is_allowed(&resolved)
+        || is_within_app_storage(&resolved, &roots)
+        || is_within_data_dir(&resolved)
+    {
         return Ok(resolved);
     }
     Err(Error::Forbidden(file_path.to_string()))
@@ -176,6 +192,89 @@ pub struct ProgressPayload {
     progress: u64,
     total: u64,
     transfer_speed: u64,
+}
+
+fn request(
+    client: &reqwest::Client,
+    url: &str,
+    body: Option<&String>,
+    headers: &HashMap<String, String>,
+) -> reqwest::RequestBuilder {
+    let mut request = match body {
+        Some(body) => client.post(url).body(body.clone()),
+        None => client.get(url),
+    };
+    for (key, value) in headers {
+        request = request.header(key, value);
+    }
+    request
+}
+
+/// Sends a request through `client`. With `verified` (the request accepts
+/// invalid certificates and `client` follows no redirects), redirects are
+/// followed here hop by hop: hops within the origin stay on `client`, and the
+/// first hop to another origin continues on the verified client without
+/// credentials, as reqwest does for any cross-host redirect.
+async fn send(
+    client: &reqwest::Client,
+    verified: Option<&reqwest::Client>,
+    url: &str,
+    body: Option<&String>,
+    headers: &HashMap<String, String>,
+) -> Result<reqwest::Response> {
+    use reqwest::StatusCode;
+
+    let Some(verified) = verified else {
+        return Ok(request(client, url, body, headers).send().await?);
+    };
+    let start = reqwest::Url::parse(url).map_err(|e| Error::ContentLength(e.to_string()))?;
+    let mut url = start.clone();
+    // A request is a POST exactly when it carries a body (see `request`).
+    let mut body = body;
+    for _ in 0..=10 {
+        let response = request(client, url.as_str(), body, headers).send().await?;
+        let status = response.status();
+        if !matches!(
+            status,
+            StatusCode::MOVED_PERMANENTLY
+                | StatusCode::FOUND
+                | StatusCode::SEE_OTHER
+                | StatusCode::TEMPORARY_REDIRECT
+                | StatusCode::PERMANENT_REDIRECT
+        ) {
+            return Ok(response);
+        }
+        let Some(next) = response
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|location| location.to_str().ok())
+            .and_then(|location| url.join(location).ok())
+        else {
+            return Ok(response);
+        };
+        if !matches!(
+            status,
+            StatusCode::TEMPORARY_REDIRECT | StatusCode::PERMANENT_REDIRECT
+        ) {
+            body = None;
+        }
+        url = next;
+        if url.origin() != start.origin() {
+            let headers: HashMap<String, String> = headers
+                .iter()
+                .filter(|(key, _)| {
+                    !["authorization", "cookie", "proxy-authorization"]
+                        .iter()
+                        .any(|name| key.eq_ignore_ascii_case(name))
+                })
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            return Ok(request(verified, url.as_str(), body, &headers)
+                .send()
+                .await?);
+        }
+    }
+    Err(Error::ContentLength("too many redirects".into()))
 }
 
 #[command]
@@ -199,31 +298,28 @@ pub async fn download_file<R: tauri::Runtime>(
 
     const PART_SIZE: u64 = 1024 * 1024;
 
-    let client = reqwest::ClientBuilder::new()
-        .danger_accept_invalid_certs(skip_ssl_verification.unwrap_or(false))
-        .danger_accept_invalid_hostnames(skip_ssl_verification.unwrap_or(false))
-        .build()?;
+    let relaxed = skip_ssl_verification.unwrap_or(false);
+    let mut builder = reqwest::ClientBuilder::new()
+        .danger_accept_invalid_certs(relaxed)
+        .danger_accept_invalid_hostnames(relaxed);
+    let mut verified = None;
+    if relaxed {
+        builder = builder.redirect(reqwest::redirect::Policy::none());
+        verified = Some(reqwest::Client::new());
+    }
+    let client = builder.build()?;
     let force_single = single_threaded.unwrap_or(false);
 
     async fn single_threaded_download(
         client: &reqwest::Client,
+        verified: Option<&reqwest::Client>,
         url: &str,
         file_path: &Path,
         headers: &HashMap<String, String>,
         body: &Option<String>,
         on_progress: Channel<ProgressPayload>,
     ) -> Result<HashMap<String, String>> {
-        let mut request = if let Some(body) = body {
-            client.post(url).body(body.clone())
-        } else {
-            client.get(url)
-        };
-
-        for (key, value) in headers {
-            request = request.header(key, value);
-        }
-
-        let response = request.send().await?;
+        let response = send(client, verified, url, body.as_ref(), headers).await?;
         if !response.status().is_success() {
             return Err(Error::HttpErrorCode(
                 response.status().as_u16(),
@@ -258,16 +354,22 @@ pub async fn download_file<R: tauri::Runtime>(
     }
 
     if force_single {
-        return single_threaded_download(&client, url, file_path, &headers, &body, on_progress)
-            .await;
+        return single_threaded_download(
+            &client,
+            verified.as_ref(),
+            url,
+            file_path,
+            &headers,
+            &body,
+            on_progress,
+        )
+        .await;
     }
 
     // Check if server supports range requests
-    let mut range_req = client.get(url).header("Range", "bytes=0-0");
-    for (key, value) in headers.iter() {
-        range_req = range_req.header(key, value);
-    }
-    let range_resp = range_req.send().await?;
+    let mut range_headers = headers.clone();
+    range_headers.insert("Range".into(), "bytes=0-0".into());
+    let range_resp = send(&client, verified.as_ref(), url, None, &range_headers).await?;
     let accept_ranges = range_resp
         .headers()
         .get("accept-ranges")
@@ -290,8 +392,16 @@ pub async fn download_file<R: tauri::Runtime>(
     }
 
     if !accept_ranges || total == 0 {
-        return single_threaded_download(&client, url, file_path, &headers, &body, on_progress)
-            .await;
+        return single_threaded_download(
+            &client,
+            verified.as_ref(),
+            url,
+            file_path,
+            &headers,
+            &body,
+            on_progress,
+        )
+        .await;
     }
 
     // Multi-part download with range access
@@ -305,6 +415,7 @@ pub async fn download_file<R: tauri::Runtime>(
     stream::iter(0..part_count)
         .for_each_concurrent(8, |i| {
             let client = client.clone();
+            let verified = verified.clone();
             let file = Arc::clone(&file);
             let progress = Arc::clone(&progress);
             let headers = headers.clone();
@@ -316,12 +427,10 @@ pub async fn download_file<R: tauri::Runtime>(
                 let end = min(start + PART_SIZE - 1, total - 1);
                 let range_header = format!("bytes={start}-{end}");
 
-                let mut req = client.get(&url).header("Range", range_header);
-                for (key, value) in headers {
-                    req = req.header(key, value);
-                }
+                let mut headers = headers;
+                headers.insert("Range".into(), range_header);
 
-                let resp = match req.send().await {
+                let resp = match send(&client, verified.as_ref(), &url, None, &headers).await {
                     Ok(r) => r,
                     Err(_) => return,
                 };
@@ -419,8 +528,57 @@ fn file_to_body(channel: Channel<ProgressPayload>, file: File, file_len: u64) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{has_disallowed_components, is_within_app_storage, resolve_path};
+    use super::{
+        has_disallowed_components, is_within_app_storage, is_within_data_dir, resolve_path,
+        resolve_request, send,
+    };
+    use std::collections::HashMap;
     use std::path::{Path, PathBuf};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn data_dir_authorizes_custom_library_locations() {
+        // Custom data locations always keep their files beneath a `Readest`
+        // folder (#6383): iCloud Drive, Android shared storage, portable Windows.
+        for path in [
+            "/Users/x/Library/Mobile Documents/com~apple~CloudDocs/Resources/Readest/Readest/Books/h/book.epub",
+            "/storage/emulated/0/Books/Readest/Readest/Books/h/book.epub",
+            "/Users/x/Apps/Readest-portable/Readest/Books/h/book.epub",
+            "/Users/x/Readest",
+        ] {
+            assert!(is_within_data_dir(Path::new(path)), "{path}");
+        }
+        for path in [
+            "/Users/x/Library/LaunchAgents/Readest-agent.plist",
+            "/Users/x/Apps/Readest-portable/secrets.txt",
+            "/Users/x/.ssh/id_rsa",
+        ] {
+            assert!(!is_within_data_dir(Path::new(path)), "{path}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn data_dir_does_not_authorize_escapes_from_a_readest_folder() {
+        let temp = std::env::temp_dir().join(format!("readest-data-dir-{}", std::process::id()));
+        let data = temp.join("Readest");
+        let secret = temp.join("secret");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir_all(&secret).unwrap();
+        std::fs::write(secret.join("key"), b"secret").unwrap();
+        std::os::unix::fs::symlink(&secret, data.join("escape")).unwrap();
+        let allowed = |path: &Path| {
+            resolve_request(path.to_str().unwrap()).is_ok_and(|p| is_within_data_dir(&p))
+        };
+        // `..` is refused before resolution, existing or not.
+        assert!(!allowed(&data.join("../secret/key")));
+        assert!(!allowed(&data.join("Books/../../secret/key")));
+        // A symlink is judged by where it lands, for reads and new downloads.
+        assert!(!allowed(&data.join("escape/key")));
+        assert!(!allowed(&data.join("escape/new/file.epub")));
+        assert!(allowed(&data.join("Books/new.epub")));
+        std::fs::remove_dir_all(temp).unwrap();
+    }
 
     #[test]
     fn app_storage_does_not_authorize_brand_names_in_foreign_paths() {
@@ -488,5 +646,125 @@ mod tests {
         assert!(!has_disallowed_components(
             "C:\\Users\\x\\AppData\\Roaming\\Readest\\Books\\h.epub"
         ));
+    }
+
+    /// Serves one response per connection on 127.0.0.1 and returns the
+    /// requests it received, lowercased.
+    async fn serve(
+        responses: impl FnOnce(u16) -> Vec<String> + Send + 'static,
+    ) -> (u16, tokio::task::JoinHandle<Vec<String>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for response in responses(port) {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut bytes = vec![0; 4096];
+                let count = stream.read(&mut bytes).await.unwrap();
+                requests.push(String::from_utf8_lossy(&bytes[..count]).to_lowercase());
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+            requests
+        });
+        (port, server)
+    }
+
+    fn redirect(status: &str, location: &str) -> String {
+        format!("HTTP/1.1 {status}\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+    }
+
+    const BOOK: &str = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nbook";
+
+    /// The download's relaxed and verified clients, told apart by user agent,
+    /// with books.example.org and cdn.example.org both on the test server.
+    fn clients(port: u16) -> (reqwest::Client, reqwest::Client) {
+        let client = |agent: &str| {
+            reqwest::Client::builder()
+                .resolve("books.example.org", ([127, 0, 0, 1], port).into())
+                .resolve("cdn.example.org", ([127, 0, 0, 1], port).into())
+                .no_proxy()
+                .user_agent(agent)
+        };
+        (
+            client("relaxed")
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            client("verified").build().unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn relaxed_download_verifies_a_redirect_to_another_origin() {
+        let (port, server) = serve(|port| {
+            vec![
+                redirect("302 Found", "/moved"),
+                redirect("302 Found", &format!("http://cdn.example.org:{port}/book")),
+                BOOK.to_string(),
+            ]
+        })
+        .await;
+        let url = format!("http://books.example.org:{port}/get");
+        let (relaxed, verified) = clients(port);
+        let headers = HashMap::from([
+            ("Authorization".to_string(), "Basic dTpw".to_string()),
+            ("X-Device".to_string(), "reader".to_string()),
+        ]);
+
+        let response = send(&relaxed, Some(&verified), &url, None, &headers)
+            .await
+            .unwrap();
+
+        assert_eq!(response.text().await.unwrap(), "book");
+        let requests = server.await.unwrap();
+        assert!(
+            requests[0].starts_with("get /get ") && requests[0].contains("user-agent: relaxed")
+        );
+        assert!(
+            requests[1].starts_with("get /moved ") && requests[1].contains("user-agent: relaxed")
+        );
+        assert!(requests[2].starts_with("get /book "));
+        assert!(
+            requests[2].contains("user-agent: verified"),
+            "{}",
+            requests[2]
+        );
+        assert!(!requests[2].contains("authorization:"));
+        assert!(requests[2].contains("x-device: reader"));
+    }
+
+    #[tokio::test]
+    async fn relaxed_download_keeps_a_post_turned_get_across_origins() {
+        let (port, server) = serve(|port| {
+            vec![
+                redirect("303 See Other", "/done"),
+                redirect(
+                    "307 Temporary Redirect",
+                    &format!("http://cdn.example.org:{port}/book"),
+                ),
+                BOOK.to_string(),
+            ]
+        })
+        .await;
+        let url = format!("http://books.example.org:{port}/export");
+        let (relaxed, verified) = clients(port);
+        let body = "{\"token\":\"secret\"}".to_string();
+
+        let response = send(
+            &relaxed,
+            Some(&verified),
+            &url,
+            Some(&body),
+            &HashMap::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.text().await.unwrap(), "book");
+        let requests = server.await.unwrap();
+        assert!(requests[0].starts_with("post /export "));
+        assert!(requests[1].starts_with("get /done "));
+        assert!(requests[2].starts_with("get /book "), "{}", requests[2]);
+        assert!(!requests[2].contains("secret"));
     }
 }

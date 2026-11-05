@@ -2,7 +2,8 @@
 
 import clsx from 'clsx';
 import { useState, useEffect, useCallback } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
+import { useAppRouter } from '@/hooks/useAppRouter';
 import { useEnv } from '@/context/EnvContext';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/hooks/useTheme';
@@ -12,7 +13,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useUserActions } from '@/hooks/useUserActions';
 import { useAvailablePlans } from '@/hooks/useAvailablePlans';
 import type { PlanType } from '@/types/quota';
-import { navigateToLibrary } from '@/utils/nav';
+import { navigateBackFromProfile } from '@/utils/nav';
 import { eventDispatcher } from '@/utils/event';
 import { isTauriAppPlatform } from '@/services/environment';
 import { getPlanDetails, shouldUseBillingPortal } from './utils/plan';
@@ -56,7 +57,7 @@ type CheckoutState = {
 
 const ProfilePage = () => {
   const _ = useTranslation();
-  const router = useRouter();
+  const router = useAppRouter();
   const { appService } = useEnv();
   const { token, user, refresh } = useAuth();
   const { safeAreaInsets, isRoundedWindow } = useThemeStore();
@@ -85,11 +86,12 @@ const ProfilePage = () => {
     if (isAuthenticated) return;
 
     const timer = setTimeout(() => {
-      router.push('/auth?redirect=/library');
+      const redirect = searchParams?.get('redirect') || '/library';
+      router.push(`/auth?redirect=${encodeURIComponent(redirect)}`);
     }, 1000);
 
     return () => clearTimeout(timer);
-  }, [mounted, user, token, appService, router]);
+  }, [mounted, user, token, appService, router, searchParams]);
 
   useTheme({ systemUIVisible: false });
 
@@ -126,7 +128,7 @@ const ProfilePage = () => {
     } else if (showSyncManager) {
       setShowSyncManager(false);
     } else {
-      navigateToLibrary(router);
+      navigateBackFromProfile(router, searchParams?.get('redirect'));
     }
   };
 
@@ -216,6 +218,9 @@ const ProfilePage = () => {
         // server, so re-verify those too.
         await verifyGooglePurchaseProducts(purchases);
         await verifyApplePurchaseProducts(purchases);
+        if (!(await refresh())) {
+          throw new Error('Failed to refresh session after restoring purchases');
+        }
         const restoredSubscriptions = purchases
           .filter((p) => !isPurchaseProduct(p.productId))
           .sort((a, b) => new Date(b.purchaseDate).getTime() - new Date(a.purchaseDate).getTime());
@@ -383,7 +388,10 @@ const ProfilePage = () => {
                     </div>
                     <div className='flex flex-col gap-y-8 px-6'>
                       <AccountActions
+                        userEmail={userEmail}
+                        planName={_(userPlanDetails.name)}
                         userPlan={userProfilePlan}
+                        customizationPurchased={customizationPurchased}
                         iapAvailable={iapAvailable}
                         onLogout={handleLogout}
                         onResetPassword={handleResetPassword}

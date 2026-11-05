@@ -58,6 +58,7 @@ export const BOOKSHELF_SORT_LABELS: Record<LibrarySortByType, string> = {
   series: _('Series'),
   size: _('Size'),
   format: _('Format'),
+  pages: _('Pages'),
   published: _('Date Published'),
   progress: _('Progress Read'),
   timeRemaining: _('Time Remaining'),
@@ -147,6 +148,7 @@ export const bookshelfSchema: z.ZodType<BookshelfDefinition> = z
     hideCovers: z.boolean().optional(),
     coverFit: z.enum(['crop', 'fit']).optional(),
     skeuomorphicCovers: z.boolean().optional(),
+    showPageCount: z.boolean().optional(),
     filters: groupSchema(0),
     useGlobalGrouping: z.boolean().optional(),
     groupBy: z.enum(Object.values(LibraryGroupByType)).optional(),
@@ -201,6 +203,9 @@ export const defaultBookshelves = (settings: Partial<SystemSettings>): Bookshelf
     coverFit: settings.libraryCoverFit || 'crop',
     hideCovers: settings.libraryHideCovers ?? false,
     enabled: settings.libraryRecentShelfEnabled ?? true,
+    // A quick-resume strip of the books themselves, never folder/series tiles.
+    useGlobalGrouping: false,
+    groupBy: 'none',
     filters: {
       type: 'group',
       match: 'all',

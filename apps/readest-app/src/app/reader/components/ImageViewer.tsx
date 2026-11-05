@@ -4,11 +4,20 @@ import { IoChevronBack, IoChevronForward } from 'react-icons/io5';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useKeyDownActions } from '@/hooks/useKeyDownActions';
 import { useEnv } from '@/context/EnvContext';
+import { useThemeStore } from '@/store/themeStore';
 import { Insets } from '@/types/misc';
 import { eventDispatcher } from '@/utils/event';
 import { canShareText } from '@/utils/share';
 import { dataUrlToBytes, imageExtensionFromMime } from '@/utils/image';
+import {
+  isLightColor,
+  probeImageInk,
+  resolveImagePlate,
+  type ImageInk,
+  type ImageRenderStyle,
+} from '@/app/reader/utils/imageRenderStyle';
 import ZoomControls from './ZoomControls';
+import { ImageMenu } from './ImageContextMenu';
 
 interface ImageViewerProps {
   gridInsets: Insets;
@@ -16,6 +25,12 @@ interface ImageViewerProps {
   // The image's description (its `alt` text), shown over the zoomed image when
   // the book provides one (#5232).
   caption?: string;
+  // How the book page drew this image (its `filter` and the plate it filled the
+  // transparent area with). The raw bitmap on the viewer's dimmed backdrop is
+  // not what the page shows: an ornament whose white background is transparency
+  // renders as dark ink on a dark backdrop and vanishes. Absent for images the
+  // reader does not lay out itself (a book cover, a dictionary illustration).
+  renderStyle?: ImageRenderStyle | null;
   onClose: () => void;
   onPrevious?: () => void;
   onNext?: () => void;
@@ -39,6 +54,7 @@ const MAX_COMMIT_RASTER_DIM = 4096;
 const ImageViewer: React.FC<ImageViewerProps> = ({
   src,
   caption,
+  renderStyle,
   onClose,
   onPrevious,
   onNext,
@@ -46,6 +62,7 @@ const ImageViewer: React.FC<ImageViewerProps> = ({
 }) => {
   const _ = useTranslation();
   const { appService } = useEnv();
+  const isIPhoneDuo = useThemeStore((s) => s.isIPhoneDuo);
   // On Android the button saves straight to the photo gallery (the share sheet
   // can't save to a file there); elsewhere it shares where supported, else
   // exports. The affordance reflects the actual action.
@@ -71,6 +88,7 @@ const ImageViewer: React.FC<ImageViewerProps> = ({
   const [fitSize, setFitSize] = useState<{ width: number; height: number } | null>(null);
   const [renderScale, setRenderScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isWheelZooming, setIsWheelZooming] = useState(false);
   const [showZoomLabel, setShowZoomLabel] = useState(true);
@@ -573,150 +591,216 @@ const ImageViewer: React.FC<ImageViewerProps> = ({
 
   const cursorStyle = scale > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default';
 
+  // The plate behind the image, so its transparent areas show what the page put
+  // there instead of the viewer's dimmed backdrop — which is dark in both
+  // themes, so a transparent line drawing disappears on it either way.
+  //
+  // The page's own fill is the best answer when we have it, but it cannot be
+  // depended on: a section carries the theme it loaded under, so a drawing
+  // whose plate comes from the book's night CSS loses it as soon as the reader
+  // switches theme, and the section reloads without it. The image's own pixels
+  // do not have that problem (see `resolveImagePlate`).
+  const [ink, setInk] = useState<ImageInk | null>(null);
+  const pagePlate = renderStyle?.plate ?? null;
+  // A page fill is only trustworthy when it is actually paper: the reader
+  // rewrites a book's light backgrounds to the theme color in dark mode, so the
+  // page can hand over `#1e1e1e` for a drawing it is propping up with a white
+  // shadow. Read the pixels unless the fill is light on its own.
+  const pagePlateIsPaper = isLightColor(pagePlate) === true;
+  // `undefined` means there is no page to match (a book cover, a dictionary
+  // illustration); `null` means the reader could not find the image on the page.
+  const fromPage = renderStyle !== undefined;
+  useEffect(() => {
+    setInk(null);
+    if (!src || !fromPage || pagePlateIsPaper) return;
+    let cancelled = false;
+    probeImageInk(decodeURIComponent(src)).then((result) => {
+      if (!cancelled) setInk(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [src, fromPage, pagePlateIsPaper]);
+
+  const plate = resolveImagePlate({ pagePlate, filter: renderStyle?.filter, ink });
+
   if (!src) return null;
 
+  // Desktop right-click gets the same image menu as an image in the book.
+  const handleContextMenu = (e: React.MouseEvent) => {
+    if (appService?.isMobile) return;
+    e.preventDefault();
+    setMenuPosition({ x: e.clientX, y: e.clientY });
+  };
+
   return (
-    // `no-context-menu` suppresses the WebView's native long-press image
-    // callout (via the `.no-context-menu img` rule). On Android it otherwise
-    // collides with the pinch/pan handlers below and freezes the app.
-    <div
-      ref={containerRef}
-      data-capture-blocking-overlay='true'
-      tabIndex={-1}
-      role='button'
-      aria-label={_('Image viewer')}
-      className='no-context-menu fixed inset-0 z-50 flex items-center justify-center outline-hidden'
-      onKeyDown={handleKeyDown}
-      onWheel={handleWheel}
-      onTouchMove={onTouchMove}
-      onTouchStart={onTouchStart}
-      onTouchEnd={onTouchEnd}
-    >
+    <>
+      {/* `no-context-menu` suppresses the WebView's native long-press image
+        callout (via the `.no-context-menu img` rule). On Android it otherwise
+        collides with the pinch/pan handlers below and freezes the app. */}
       <div
+        ref={containerRef}
+        data-capture-blocking-overlay='true'
+        tabIndex={-1}
         role='button'
-        tabIndex={0}
-        className='image-viewer-overlay not-eink:bg-black/50 eink:bg-base-100 not-eink:backdrop-blur-md absolute inset-0'
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            onClose();
-          }
-        }}
-      />
-      {showChrome && (
-        <ZoomControls
-          gridInsets={gridInsets}
-          canShare={canShare}
-          onClose={onClose}
-          onSave={handleSaveImage}
-          onZoomIn={handleZoomIn}
-          onZoomOut={handleZoomOut}
-          onReset={handleReset}
-        />
-      )}
-
-      {onPrevious && showZoomLabel && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            handlePreviousImage();
-          }}
-          className='eink-bordered absolute left-4 top-1/2 z-10 flex h-12 w-12 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-black/50 text-white transition-all duration-300 hover:bg-black/70'
-          aria-label={_('Previous Image')}
-          title={_('Previous Image')}
-        >
-          <IoChevronBack className='h-8 w-8' />
-        </button>
-      )}
-
-      {onNext && showZoomLabel && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            handleNextImage();
-          }}
-          className='eink-bordered absolute right-4 top-1/2 z-10 flex h-12 w-12 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-black/50 text-white transition-all duration-300 hover:bg-black/70'
-          aria-label={_('Next Image')}
-          title={_('Next Image')}
-        >
-          <IoChevronForward className='h-8 w-8' />
-        </button>
-      )}
-
-      <div
-        role='none'
-        className={clsx('relative flex h-full w-full items-center justify-center overflow-hidden')}
-        onClick={handleContainerClick}
+        aria-label={_('Image viewer')}
+        className='no-context-menu fixed inset-0 z-50 flex items-center justify-center outline-hidden'
+        onKeyDown={handleKeyDown}
+        onWheel={handleWheel}
+        onTouchMove={onTouchMove}
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
       >
-        <img
-          role='none'
-          src={decodeURIComponent(src)}
-          ref={imageRef}
-          alt={caption || _('Zoomed')}
-          className='transform-gpu select-none object-contain'
-          draggable={false}
-          width={0}
-          height={0}
-          sizes='100vw'
-          onLoad={measureFit}
-          onClick={handleImageClick}
-          onMouseDown={handleImageMouseDown}
-          onDoubleClick={onDoubleClick}
-          style={{
-            // Once measured, the layout size is explicit so committed zoom can
-            // grow it past the container (`flexShrink` keeps the centering
-            // flexbox from clamping it back to the container size).
-            ...(fitSize
-              ? {
-                  width: `${fitSize.width * renderScale}px`,
-                  height: `${fitSize.height * renderScale}px`,
-                  maxWidth: 'none',
-                  maxHeight: 'none',
-                }
-              : { width: 'auto', height: 'auto', maxWidth: '100%', maxHeight: '100%' }),
-            flexShrink: 0,
-            transform: `scale(${scale / renderScale}) translate(${(position.x * renderScale) / scale}px, ${(position.y * renderScale) / scale}px)`,
-            // No transition during continuous gestures: the 0.05s ease made the
-            // image lag behind a moving pointer, which flickered on desktop
-            // (#4451). The same lag flickered a trackpad pinch (a rapid
-            // ctrl+wheel stream) on macOS (#4742). Keep the smoothing only for
-            // discrete zoom (buttons, double-click, keyboard) and suppress it
-            // for the render that commits a zoom into the layout size.
-            transition:
-              isDragging || isWheelZooming || commitJustApplied.current
-                ? 'none'
-                : 'transform 0.05s ease-out',
-            // Promote to a GPU layer so transform changes don't repaint the
-            // page (the `transform-gpu` class is overridden by this inline
-            // transform, so its hint is lost).
-            willChange: 'transform',
-            cursor: cursorStyle,
+        <div
+          role='button'
+          tabIndex={0}
+          className='image-viewer-overlay not-eink:bg-black/50 eink:bg-base-100 not-eink:backdrop-blur-md absolute inset-0'
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              onClose();
+            }
           }}
         />
-      </div>
+        {showChrome && (
+          <ZoomControls
+            gridInsets={gridInsets}
+            canShare={canShare}
+            onClose={onClose}
+            onSave={handleSaveImage}
+            onZoomIn={handleZoomIn}
+            onZoomOut={handleZoomOut}
+            onReset={handleReset}
+          />
+        )}
 
-      {/* Sibling of the click-to-close container above, so reading (or
+        {onPrevious && showZoomLabel && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handlePreviousImage();
+            }}
+            className='eink-bordered absolute left-4 top-1/2 z-10 flex h-12 w-12 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-black/50 text-white transition-all duration-300 hover:bg-black/70'
+            aria-label={_('Previous Image')}
+            title={_('Previous Image')}
+            // Clears the Duo status-bar strip, reported as a left inset (#6307).
+            style={isIPhoneDuo ? { left: `${gridInsets.left + 16}px` } : undefined}
+          >
+            <IoChevronBack className='h-8 w-8' />
+          </button>
+        )}
+
+        {onNext && showZoomLabel && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleNextImage();
+            }}
+            className='eink-bordered absolute right-4 top-1/2 z-10 flex h-12 w-12 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-black/50 text-white transition-all duration-300 hover:bg-black/70'
+            aria-label={_('Next Image')}
+            title={_('Next Image')}
+            // Clears the Duo status-bar strip, reported as a right inset (#6307).
+            style={isIPhoneDuo ? { right: `${gridInsets.right + 16}px` } : undefined}
+          >
+            <IoChevronForward className='h-8 w-8' />
+          </button>
+        )}
+
+        <div
+          role='none'
+          className={clsx(
+            'relative flex h-full w-full items-center justify-center overflow-hidden',
+          )}
+          onClick={handleContainerClick}
+        >
+          <img
+            role='none'
+            src={decodeURIComponent(src)}
+            ref={imageRef}
+            alt={caption || _('Zoomed')}
+            className='transform-gpu select-none object-contain'
+            draggable={false}
+            width={0}
+            height={0}
+            sizes='100vw'
+            onLoad={measureFit}
+            onClick={handleImageClick}
+            onMouseDown={handleImageMouseDown}
+            onDoubleClick={onDoubleClick}
+            onContextMenu={handleContextMenu}
+            style={{
+              // Reproduce what the page painted: the same filter, and the plate
+              // it filled the image's transparent area with. Without them a
+              // line drawing whose white background is alpha renders as dark ink
+              // on the dimmed backdrop (see `ImageRenderStyle`).
+              ...(renderStyle?.filter && renderStyle.filter !== 'none'
+                ? { filter: renderStyle.filter }
+                : {}),
+              ...(plate ? { backgroundColor: plate } : {}),
+              // Once measured, the layout size is explicit so committed zoom can
+              // grow it past the container (`flexShrink` keeps the centering
+              // flexbox from clamping it back to the container size).
+              ...(fitSize
+                ? {
+                    width: `${fitSize.width * renderScale}px`,
+                    height: `${fitSize.height * renderScale}px`,
+                    maxWidth: 'none',
+                    maxHeight: 'none',
+                  }
+                : { width: 'auto', height: 'auto', maxWidth: '100%', maxHeight: '100%' }),
+              flexShrink: 0,
+              transform: `scale(${scale / renderScale}) translate(${(position.x * renderScale) / scale}px, ${(position.y * renderScale) / scale}px)`,
+              // No transition during continuous gestures: the 0.05s ease made the
+              // image lag behind a moving pointer, which flickered on desktop
+              // (#4451). The same lag flickered a trackpad pinch (a rapid
+              // ctrl+wheel stream) on macOS (#4742). Keep the smoothing only for
+              // discrete zoom (buttons, double-click, keyboard) and suppress it
+              // for the render that commits a zoom into the layout size.
+              transition:
+                isDragging || isWheelZooming || commitJustApplied.current
+                  ? 'none'
+                  : 'transform 0.05s ease-out',
+              // Promote to a GPU layer so transform changes don't repaint the
+              // page (the `transform-gpu` class is overridden by this inline
+              // transform, so its hint is lost).
+              willChange: 'transform',
+              cursor: cursorStyle,
+            }}
+          />
+        </div>
+
+        {/* Sibling of the click-to-close container above, so reading (or
           scrolling) the description never dismisses the viewer. */}
-      {caption && showChrome && (
-        <div
-          // The description comes from the book, whose language need not match
-          // the UI's, so let the text pick its own direction.
-          dir='auto'
-          className='image-caption eink-bordered not-eink:text-white not-eink:bg-black/50 absolute bottom-4 left-1/2 z-10 max-h-[30%] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 overflow-y-auto rounded-lg px-4 py-2 text-center text-sm'
-          style={{ marginBottom: `${gridInsets.bottom}px` }}
-        >
-          {caption}
-        </div>
-      )}
+        {caption && showChrome && (
+          <div
+            // The description comes from the book, whose language need not match
+            // the UI's, so let the text pick its own direction.
+            dir='auto'
+            className='image-caption eink-bordered not-eink:text-white not-eink:bg-black/50 absolute bottom-4 left-1/2 z-10 max-h-[30%] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 overflow-y-auto rounded-lg px-4 py-2 text-center text-sm'
+            style={{ marginBottom: `${gridInsets.bottom}px` }}
+          >
+            {caption}
+          </div>
+        )}
 
-      {showZoomLabel && (
-        <div
-          aria-label={_('Zoom level')}
-          className='zoom-level-label eink-bordered not-eink:text-white not-eink:bg-black/50 pointer-events-none absolute left-1/2 top-12 -translate-x-1/2 rounded-full px-3 py-1 text-sm transition-opacity duration-300'
-        >
-          {zoomPercent}%
-        </div>
+        {showZoomLabel && (
+          <div
+            aria-label={_('Zoom level')}
+            className='zoom-level-label eink-bordered not-eink:text-white not-eink:bg-black/50 pointer-events-none absolute left-1/2 top-12 -translate-x-1/2 rounded-full px-3 py-1 text-sm transition-opacity duration-300'
+          >
+            {zoomPercent}%
+          </div>
+        )}
+      </div>
+      {/* Outside the viewer, so its clicks never reach the click-to-close
+        container. */}
+      {menuPosition && (
+        <ImageMenu
+          getImage={() => fetch(decodeURIComponent(src)).then((res) => res.blob())}
+          position={menuPosition}
+          onClose={() => setMenuPosition(null)}
+        />
       )}
-    </div>
+    </>
   );
 };
 

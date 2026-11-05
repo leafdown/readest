@@ -13,6 +13,13 @@ preview_urls = true
 [triggers]
 crons = ["*/10 * * * *"]
 
+# Run the Worker near its back end (Supabase, us-east-1) instead of in every
+# location: API routes make 1-3 Supabase round trips each, and fewer locations
+# means fewer cold isolates, which carry most of the CPU bill. Static assets
+# are still served from the location nearest the reader.
+[placement]
+mode = "smart"
+
 [[routes]]
 pattern = "web-cf.readest.com"
 zone_name = "readest.com"
@@ -40,6 +47,25 @@ PNPM_VERSION = "10.28.1"
 # STATS_COMPACT_SEGMENT_ROWS=10000. See docs/stats-archive.md.
 STATS_COMPACT_ENABLED = "true"
 STATS_COMPACT_USERS_PER_RUN = "100"
+
+# Readest Voice: the readest-voice Worker (readest/readest-voice repo) runs the
+# dispatcher, RunPod and the download workers; the /api/tts/readest routes
+# gate, check quota and charge, and call it here (src/libs/readestVoice/
+# service.ts). Without this binding Readest Voice answers NOT_CONFIGURED.
+[[services]]
+binding = "READEST_VOICE"
+service = "readest-voice"
+entrypoint = "ReadestVoice"
+
+# The dispatcher Durable Object moved to the readest-voice Worker; v2 deletes
+# this Worker's old instance and its storage.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TTSDispatcher"]
+
+[[migrations]]
+tag = "v2"
+deleted_classes = ["TTSDispatcher"]
 
 [observability]
 enabled = true

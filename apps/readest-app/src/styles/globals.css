@@ -292,6 +292,22 @@
     scale: 1;
   }
 
+  /* WebKit before Safari 17 (iOS <= 16) crashes the page when a color-mix()
+     that takes currentColor wins box-shadow, and the app reloads to the
+     library (#6355). daisyUI 5 puts one in the toggle and range thumb shadows;
+     the themes pin `--depth: 0`, so those layers mix at 0% and never paint.
+     Drop them and keep the range fill layers. */
+  .toggle,
+  .toggle::before {
+    box-shadow: none;
+  }
+
+  .range::-webkit-slider-thumb {
+    box-shadow:
+      0 0 0 2rem var(--range-thumb) inset,
+      var(--range-fill-x) var(--range-fill-y) 0 var(--range-fill-spread);
+  }
+
   html[data-page='default'] {
     background: var(--color-base-100);
   }
@@ -673,8 +689,11 @@
     position: relative;
   }
 
+  /* An inset outline, not a border: a border narrows the bookshelf, and its
+     width-based column count then drops (8 to 6 at 1280px) mid-drag. */
   .drag-over {
-    border: 2px dashed #4a90e2 !important;
+    outline: 2px dashed #4a90e2 !important;
+    outline-offset: -2px;
     background-color: rgba(74, 144, 226, 0.1) !important;
     transition: all 0.2s ease-in-out;
   }
@@ -1053,6 +1072,11 @@
     display: none;
   }
 
+  /* an unfocused title-bar search field drags the window (WindowButtons) */
+  [data-window-drag] input.window-drag-input:not(:focus) {
+    cursor: default;
+  }
+
   [data-eink='true'] input.search-input,
   [data-eink='true'] input.search-input:focus {
     border-width: 1px !important;
@@ -1068,6 +1092,16 @@
   }
 
   [data-eink='true'] .dialog-overlay {
+    background-color: transparent !important;
+  }
+
+  /* Master scrim switch: a capture-blocking overlay must not paint a dark
+     veil on e-ink — the panel would refresh that large dark area and ghost
+     for seconds. Keyed on the shared capture-blocking attribute plus the
+     bg-black/<alpha> scrim classes (substring match covers every opacity and
+     the responsive variants), so themed fullscreen surfaces that paint their
+     own background (RSVP's inline style, the popup panel) survive. */
+  [data-eink='true'] [data-capture-blocking-overlay='true'][class*='bg-black/'] {
     background-color: transparent !important;
   }
 
@@ -1153,11 +1187,6 @@
     color: var(--color-base-100) !important;
   }
 
-  [data-eink='true'] .annotation-notes {
-    transform-origin: top left;
-    transform: translate(-1px, -1px);
-  }
-
   [data-eink='true'] .alert {
     color: var(--color-base-content) !important;
     border: 1px solid var(--color-base-content) !important;
@@ -1216,6 +1245,16 @@
 
   .no-transitions * {
     transition: none !important;
+  }
+
+  /* `*` can't cross a shadow boundary, so the rule above never reached the reader's
+   * page gate: the paginator's `#container` fades `opacity` over 50ms on every section
+   * reveal, and on an e-ink panel each alpha step is its own greyscale refresh — the
+   * flash seen just after a chapter opens. `container` is exported in view.js, so
+   * `::part()` is the hook that reaches it, and no `!important` is needed: an
+   * outer-tree normal declaration already outranks the shadow tree's own rule. */
+  .no-transitions foliate-view::part(container) {
+    transition: none;
   }
 
   /* settings highlight animation for command palette */
@@ -1486,7 +1525,8 @@
 
   /* Native snapshots must not bake transient host chrome (for example Toast)
      into the page texture. The live element remains above the turn after capture. */
-  .captured-turn-filter-transient-overlays [data-capture-invalidating-overlay='true'] {
+  .captured-turn-filter-transient-overlays [data-capture-invalidating-overlay='true'],
+  .captured-turn-filter-transient-overlays #page-turn-diagnostics {
     visibility: hidden !important;
   }
 
@@ -1577,4 +1617,19 @@
   [data-eink='true'] .animate-localsend-pop-in {
     animation: none;
   }
+}
+
+/* Tailwind emits `.tabular-nums` as a chain of empty-fallback var() calls over
+   @property-registered custom properties. Chromium < 119 treats any
+   declaration containing such a var() as invalid at computed-value time
+   (fixed by "CSS Variables: Persistent guaranteed-invalid values",
+   chromestatus.com/feature/6265214410424320), so on those WebViews — our
+   e-ink fleet sits on 109/113 — the utility silently computes to `normal`
+   and the readout digits render with Inter's proportional widths, reflowing
+   the footer on every value change. This unlayered duplicate wins the
+   cascade over the layered utility on every engine and is a no-op where the
+   chain already resolves (>= 119).
+   https://drafts.csswg.org/css-variables-1/#using-variables */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
 }

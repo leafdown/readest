@@ -5,10 +5,21 @@ import { EXTS } from '@/libs/document';
 import { isTauriAppPlatform } from '@/services/environment';
 import { Book, BookConfig, BookNote } from '@/types/book';
 import { SystemSettings } from '@/types/settings';
+import type { PageStatEvent, StatBook } from '@/types/statistics';
+import { StatisticsDb } from '@/services/statistics/statisticsDb';
 import { getBookDirOfPath, getLibraryFilename } from '@/utils/book';
 import { getAbsOfflineDir } from '@/utils/audiobook';
 import { stampBookConfigSchema } from '@/utils/serializer';
 import { configureZip } from '@/utils/zip';
+import { mergeEntries } from '@/services/vocabulary/entry';
+import {
+  VOCABULARY_FILENAME,
+  parseVocabularyFile,
+  readVocabularyFile,
+  serializeVocabulary,
+  writeVocabularyFile,
+} from '@/services/vocabulary/persistence';
+import { useVocabularyStore } from '@/store/vocabularyStore';
 
 /** Book file extensions for identifying book files in backup directories. */
 const BOOK_EXTS = new Set(Object.values(EXTS));
@@ -20,6 +31,9 @@ const isAbsOfflineEntry = (entryName: string): boolean => {
 
 /** Root-level zip entry name for the backed-up global settings snapshot. */
 export const SETTINGS_BACKUP_FILENAME = 'settings.json';
+
+/** Root-level zip entry name for the reading statistics (#6488). */
+export const STATISTICS_BACKUP_FILENAME = 'statistics.json';
 
 /**
  * Options controlling what a backup zip includes.
@@ -47,6 +61,7 @@ export const BACKUP_SETTINGS_BLACKLIST = [
   'autoImportFolders',
   'autoImportFlattenFolders',
   'savedBookCoverForLockScreenPath',
+  'obsidian',
   // Per-device identity — restoring causes sync identity / HLC collisions.
   'replicaDeviceId',
   'kosync.deviceId',
@@ -58,6 +73,7 @@ export const BACKUP_SETTINGS_BLACKLIST = [
   'lastSyncedAtReplicas',
   'readwise.lastSyncedAt',
   'hardcover.lastSyncedAt',
+  'pagebound.lastSyncedAt',
   'notion.lastSyncedAt',
   'googleDrive.deviceId',
   'googleDrive.lastSyncedAt',
@@ -87,8 +103,9 @@ export const BACKUP_SETTINGS_BLACKLIST = [
 
 /**
  * Credential dot-paths stripped from backups unless `includeCredentials`
- * is set. OPDS catalog and Audiobookshelf server credentials live inside
- * the `opdsCatalogs` / `absServers` arrays and are handled separately in
+ * is set. OPDS catalog, Audiobookshelf server, custom translator and custom
+ * TTS credentials live inside the `opdsCatalogs` / `absServers` /
+ * `customTranslators` / `customTTSServices` arrays and are handled separately in
  * `sanitizeSettingsForBackup`.
  */
 export const BACKUP_SETTINGS_CREDENTIAL_FIELDS = [
@@ -98,8 +115,15 @@ export const BACKUP_SETTINGS_CREDENTIAL_FIELDS = [
   'bookorbit.username',
   'bookorbit.userkey',
   'bookorbit.password',
+  'grimmory.username',
+  'grimmory.password',
+  // Custom headers can carry access secrets (e.g. CF-Access-Client-Secret).
+  'grimmory.customHeaders',
   'readwise.accessToken',
   'hardcover.accessToken',
+  'hardcover.oauth',
+  'pagebound.refreshToken',
+  'pagebound.apiToken',
   'notion.accessToken',
   // S3 access keys are strong, long-lived cloud credentials — strip them from
   // unencrypted backup zips unless the user opts into including credentials.
@@ -171,6 +195,21 @@ export function sanitizeSettingsForBackup(
       clone.calibreServers = clone.calibreServers.map((server) => {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { username: _username, password: _password, ...rest } = server;
+        return rest;
+      });
+    }
+    if (Array.isArray(clone.customTranslators)) {
+      clone.customTranslators = clone.customTranslators.map((translator) => {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { apiKey: _apiKey, ...rest } = translator;
+        return rest;
+      });
+    }
+    if (Array.isArray(clone.customTTSServices)) {
+      clone.customTTSServices = clone.customTTSServices.map((service) => {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { apiKey: _apiKey, ...rest } = service;
+
         return rest;
       });
     }
@@ -329,6 +368,31 @@ async function collectBackupEntries(
     console.warn('Skipping settings backup:', error);
   }
 
+  // Reading statistics live in statistics.db under the Data dir, outside the
+  // Books tree walked below: export every book and page event.
+  try {
+    const stats = await StatisticsDb.open(appService);
+    const { books: statBooks, events } = await stats.getEventsForPush(0);
+    texts.push({
+      name: STATISTICS_BACKUP_FILENAME,
+      content: JSON.stringify({ books: statBooks, events }),
+    });
+  } catch (error) {
+    console.warn('Skipping statistics backup:', error);
+  }
+
+  // The vocabulary builder's words live in the Data dir too. Save any change
+  // still waiting for the delayed save first.
+  try {
+    await useVocabularyStore.getState().flush();
+    const entries = await readVocabularyFile(appService);
+    if (entries.length) {
+      texts.push({ name: VOCABULARY_FILENAME, content: serializeVocabulary(entries) });
+    }
+  } catch (error) {
+    console.warn('Skipping vocabulary backup:', error);
+  }
+
   // Add the files of every live library book. Only a book's own `<hash>/`
   // dir is exported: the Books/ tree also holds root-level library metadata
   // and dirs no live row references — a soft-deleted book whose file
@@ -471,15 +535,31 @@ export async function createBackupZipToFile(
   const { writeFile } = await import('@tauri-apps/plugin-fs');
 
   await writeFile(filePath, new Uint8Array());
-  const { readable, writable } = new TransformStream<Uint8Array>();
+  let stream!: TransformStreamDefaultController<Uint8Array>;
+  const { readable, writable } = new TransformStream<Uint8Array>({
+    start: (controller) => {
+      stream = controller;
+    },
+  });
+  // When either side fails, error the stream so the other one stops too:
+  // the zip writer would wait on backpressure forever (#6375) and the file
+  // write would keep reading, its file open, until the stream ends.
+  const failBoth = (error: unknown) => {
+    stream.error(error);
+    throw error;
+  };
 
   // Start streaming readable side to the file (runs concurrently)
-  const writePromise = writeFile(filePath, readable);
-
-  const writer = new ZipWriter(writable);
-  await addBackupEntriesToZip(writer, appService, options, onProgress);
-  await writer.close();
-  await writePromise;
+  const writePromise = writeFile(filePath, readable).catch(failBoth);
+  const zipPromise = (async () => {
+    const writer = new ZipWriter(writable);
+    await addBackupEntriesToZip(writer, appService, options, onProgress);
+    await writer.close();
+  })().catch(failBoth);
+  // Wait for both: the caller may delete the file as soon as this returns.
+  const results = await Promise.allSettled([writePromise, zipPromise]);
+  const failure = results.find((result) => result.status === 'rejected');
+  if (failure) throw failure.reason;
 }
 
 /**
@@ -497,6 +577,7 @@ export function validateBackupStructure(entryNames: string[]): boolean {
  * - Add new books not present in current library
  * - Import orphan hash directories not listed in library.json
  * - Restore global settings (settings.json), deep-merged onto current
+ * - Merge reading statistics (statistics.json) into statistics.db
  */
 export async function restoreFromBackupZip(
   appService: AppService,
@@ -678,6 +759,46 @@ export async function restoreFromBackupZip(
     }
   }
 
+  // Merge reading statistics the same way a stats sync pull does: book rows
+  // matched by md5, a session already on this device keeps its longer duration.
+  const statsEntry = fileEntries.find((e) => e.filename === STATISTICS_BACKUP_FILENAME);
+  if (statsEntry) {
+    try {
+      const data = await statsEntry.getData!(new Uint8ArrayWriter());
+      const { books, events }: { books: StatBook[]; events: PageStatEvent[] } = JSON.parse(
+        new TextDecoder().decode(data),
+      );
+      const stats = await StatisticsDb.open(appService);
+      await stats.applyRemoteEvents(books, events);
+    } catch (error) {
+      console.warn('Failed to restore statistics from backup:', error);
+    }
+  }
+
+  // Merge vocabulary like a sync pull, and mark the backed-up words dirty so
+  // the next sync pushes them (the server merge makes a repeat push harmless).
+  const vocabularyEntry = fileEntries.find((e) => e.filename === VOCABULARY_FILENAME);
+  if (vocabularyEntry) {
+    try {
+      const data = await vocabularyEntry.getData!(new Uint8ArrayWriter());
+      const backup = parseVocabularyFile(new TextDecoder().decode(data));
+      // Let pending saves finish first, so none lands over the restored list.
+      await useVocabularyStore.getState().flush();
+      const merged = new Map((await readVocabularyFile(appService)).map((e) => [e.id, e]));
+      for (const b of backup) {
+        const local = merged.get(b.id);
+        merged.set(b.id, { ...(local ? mergeEntries(local, b) : b), dirty: true });
+      }
+      await writeVocabularyFile(appService, [...merged.values()]);
+      if (useVocabularyStore.getState().loaded) {
+        useVocabularyStore.setState({ loaded: false });
+        await useVocabularyStore.getState().load(appService);
+      }
+    } catch (error) {
+      console.warn('Failed to restore vocabulary from backup:', error);
+    }
+  }
+
   await reader.close();
 
   return { booksAdded, booksUpdated, settingsRestored };
@@ -731,7 +852,25 @@ export async function saveBackupFile(
   options: BackupOptions = {},
   onProgress?: ProgressCallback,
 ): Promise<boolean> {
-  if (isTauriAppPlatform()) {
+  if (isTauriAppPlatform() && appService.isIOSApp) {
+    // The iOS save picker only exports a file: the URL it returns is not
+    // writable afterwards (EPERM, #6375). Write the zip inside the sandbox
+    // and let the share sheet's "Save to Files" copy it out.
+    const stagedName = `shared/${filename}`;
+    await appService.createDir('shared', 'Temp', true);
+    const stagedPath = await appService.resolveFilePath(stagedName, 'Temp');
+    try {
+      await createBackupZipToFile(appService, stagedPath, options, onProgress);
+      const { shareFile } = await import('@choochmeque/tauri-plugin-sharekit-api');
+      await shareFile(stagedPath, { mimeType: 'application/zip' });
+      return true;
+    } catch (error) {
+      if (error === 'Share cancelled') return false;
+      throw error;
+    } finally {
+      await appService.deleteFile(stagedName, 'Temp').catch(() => {});
+    }
+  } else if (isTauriAppPlatform()) {
     // Tauri: stream directly to the chosen file path
     const { save: saveDialog } = await import('@tauri-apps/plugin-dialog');
     const ext = filename.split('.').pop() || 'zip';

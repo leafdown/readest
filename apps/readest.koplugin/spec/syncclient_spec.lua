@@ -70,11 +70,59 @@ describe("ReadestSyncClient transport failures", function()
         assert.are.equal(0, #stubs.UIManager._scheduled)
     end)
     it("preserves HTTP auth errors for the caller without retrying", function()
-        rpc = function() error({status = 401, body = {error = "Unauthorized"}}) end
+        rpc = function() error({response = {status = 401, body = {error = "Unauthorized"}}, reason = "401 not expected"}) end
         client():pullChanges({}, callback)
         assert.are.equal(1, calls)
         assert.are.equal(401, replies[1].status)
         assert.are.equal("Unauthorized", replies[1].body.error)
+        assert.are.equal(0, #stubs.UIManager._scheduled)
+    end)
+    it("retries a wrapped HTTP timeout once and preserves the final error", function()
+        rpc = function()
+            error({ response = { status = 0, readest_timeout = true,
+                body = { error = "timeout" } }, reason = "0 not expected" })
+        end
+        client():pullChanges({}, callback)
+        assert.are.equal(0, #replies)
+        stubs.UIManager:drain()
+        assert.are.equal(2, calls)
+        assert.are.equal(1, #replies)
+        assert.is_false(replies[1].ok)
+        assert.are.equal(0, replies[1].status)
+        assert.are.equal("timeout", replies[1].body.error)
+        assert.are.equal(0, #stubs.UIManager._scheduled)
+    end)
+    it("recognizes plain timeout responses and decoded timeout bodies", function()
+        rpc = function()
+            if calls == 1 then return { status = 0, body = { error = "timeout" } } end
+            return { status = 200, body = {} }
+        end
+        client():pullChanges({}, callback)
+        stubs.UIManager:drain()
+        assert.are.equal(2, calls)
+        assert.is_true(replies[1].ok)
+    end)
+    it("does not retry writes after a wrapped HTTP timeout", function()
+        rpc = function()
+            error({ response = { status = 0, readest_timeout = true,
+                body = { error = "timeout" } }, reason = "0 not expected" })
+        end
+        client():pushChanges({}, callback)
+        assert.are.equal(1, calls)
+        assert.are.equal(1, #replies)
+        assert.is_false(replies[1].ok)
+        assert.are.equal(0, #stubs.UIManager._scheduled)
+    end)
+    it("does not retry HTTP errors or status-zero errors without a timeout", function()
+        for _, status in ipairs({ 500, 0 }) do
+            rpc = function()
+                error({ response = { status = status, body = { error = "other failure" } },
+                    reason = status .. " not expected" })
+            end
+            client():pullChanges({}, callback)
+        end
+        assert.are.equal(2, calls)
+        assert.are.equal(2, #replies)
         assert.are.equal(0, #stubs.UIManager._scheduled)
     end)
     it("does not retry programming errors", function()
@@ -87,7 +135,7 @@ describe("ReadestSyncClient transport failures", function()
 end)
 
 describe("ReadestSyncClient without Turbo", function()
-    local Client, saved, child, exited, spawn_ok, replies, rpc_calls, result_path, original_open, original_time, now, terminated
+    local Client, saved, child, exited, spawn_ok, replies, rpc_calls, result_path, original_open, original_time, now, terminated, slept, finish_after
     local function swap(name, value)
         saved[name] = package.loaded[name] or false
         package.loaded[name] = value
@@ -97,6 +145,7 @@ describe("ReadestSyncClient without Turbo", function()
         saved, replies = {}, {}
         child, exited, spawn_ok, rpc_calls, result_path = nil, false, true, 0, nil
         original_time, now, terminated = os.time, 100, 0
+        slept, finish_after = 0, nil
         os.time = function() return now end
         original_open = io.open
         io.open = function(path, mode)
@@ -106,6 +155,7 @@ describe("ReadestSyncClient without Turbo", function()
         swap("ui/uimanager", stubs.UIManager)
         swap("datastorage", {getSettingsDir = function() return "/tmp" end})
         swap("socketutil", {set_timeout = function() end, reset_timeout = function() end})
+        swap("socket", {})
         swap("ffi/util", {
             runInSubProcess = function(fn)
                 child = fn
@@ -113,6 +163,10 @@ describe("ReadestSyncClient without Turbo", function()
             end,
             isSubProcessDone = function() return exited end,
             terminateSubProcess = function() terminated = terminated + 1 end,
+            usleep = function()
+                slept = slept + 1
+                if slept == finish_after then exited = true end
+            end,
         })
         swap("ffi", {cdef = function() end, C = {_exit = function() end}})
         package.loaded["readest_syncclient"] = nil
@@ -155,12 +209,93 @@ describe("ReadestSyncClient without Turbo", function()
         assert.is_nil(require("lfs").attributes(result_path))
     end)
     it("preserves structured HTTP errors across the process boundary", function()
-        client(function() error({status = 403, body = {error = "Not authenticated"}}) end):pullChanges({}, callback)
-        child(123); exited = true; stubs.UIManager:drain()
+        client(function() error({response = {status = 403, body = {error = "Not authenticated"},
+            request = { headers = { authorization = "secret" } }}, reason = "403 not expected"}) end):pullChanges({}, callback)
+        child(123)
+        local f = original_open(result_path, "rb")
+        local encoded = f:read("*a")
+        f:close()
+        assert.is_nil(encoded:find("secret", 1, true))
+        assert.truthy(encoded:find("403 not expected", 1, true))
+        exited = true; stubs.UIManager:drain()
         assert.are.equal(1, #replies)
         assert.is_false(replies[1].ok)
         assert.are.equal(403, replies[1].status)
         assert.are.equal("Not authenticated", replies[1].body.error)
+    end)
+    it("preserves timeout markers across the process boundary for the read retry", function()
+        client(function() error({ response = { status = 0, readest_timeout = true,
+            body = { error = "timeout" } }, reason = "0 not expected" }) end):pullChanges({}, callback)
+        child(123); exited = true; stubs.UIManager:drain()
+        assert.are.equal(0, #replies)
+        exited = false
+        stubs.UIManager:drain()
+        child(123); exited = true; stubs.UIManager:drain()
+        assert.are.equal(2, rpc_calls)
+        assert.are.equal(1, #replies)
+        assert.is_false(replies[1].ok)
+        assert.are.equal("timeout", replies[1].body.error)
+    end)
+    it("keeps a refresh worker alive past the UI deadline and delivers its late response", function()
+        local body = { access_token = "new", refresh_token = "rotated" }
+        client(function() return { status = 200, body = body } end):_dispatchInSubprocess(
+            "pullChanges", {}, {3, 7}, function(ok, response)
+                callback(ok, response.body, response.status)
+            end, { deadline = 150 })
+        now = 130
+        stubs.UIManager:drain()
+        assert.are.equal(0, terminated)
+        assert.are.equal(0, #replies)
+        child(123); exited = true; stubs.UIManager:drain()
+        assert.are.equal(1, #replies)
+        assert.is_true(replies[1].ok)
+        assert.are.same(body, replies[1].body)
+        assert.is_nil(require("lfs").attributes(result_path))
+    end)
+    it("terminates a refresh worker stuck past its hard limit and reports a timeout", function()
+        client(function() return { status = 200 } end):_dispatchInSubprocess(
+            "pullChanges", {}, {3, 7}, function(ok, response)
+                callback(ok, response)
+            end, { deadline = 150 })
+        now = 249
+        stubs.UIManager:drain()
+        assert.are.equal(0, terminated)
+        now = 250
+        stubs.UIManager:drain()
+        assert.are.equal(1, terminated)
+        exited = true; stubs.UIManager:drain()
+        assert.are.equal(1, #replies)
+        assert.is_false(replies[1].ok)
+        assert.are.equal("timeout", replies[1].body)
+        assert.is_nil(require("lfs").attributes(result_path))
+    end)
+    it("connects over IPv4 in a macOS worker, where forked AF_UNSPEC lookups crash (#6933)", function()
+        local saved_os, sockets = jit.os, {}
+        local function make(family)
+            return function()
+                local sock = { family = family, timeouts = {} }
+                function sock:settimeout(value, mode) self.timeouts[mode] = value end
+                return sock
+            end
+        end
+        local socketutil = package.loaded["socketutil"]
+        socketutil.block_timeout, socketutil.total_timeout = 5, 10
+        local function run(os_name)
+            package.loaded["socket"].tcp = make("unspec")
+            package.loaded["socket"].tcp4 = make("inet")
+            jit.os = os_name
+            client(function()
+                sockets[os_name] = require("socket").tcp()
+                return { status = 200 }
+            end):pullChanges({}, callback)
+            child(123)
+            jit.os = saved_os
+        end
+        run("OSX")
+        run("Linux")
+        assert.are.equal("inet", sockets.OSX.family)
+        assert.are.same({ b = 5, t = 10 }, sockets.OSX.timeouts)
+        assert.are.equal("unspec", sockets.Linux.family)
     end)
     it("fails without running blocking HTTP on the UI thread if fork fails", function()
         spawn_ok = false
@@ -212,6 +347,39 @@ describe("ReadestSyncClient without Turbo", function()
         os.remove(dir .. "/other.json")
         os.remove(dir .. "/readest_sync_100_1.json")
         lfs.rmdir(dir)
+    end)
+    it("lets a running worker finish before KOReader quits (#6685)", function()
+        client(function() return {status = 200} end):pullChanges({}, callback)
+        finish_after = 3
+        stubs.UIManager:quit()
+        assert.are.equal(3, slept)
+        assert.are.equal(0, terminated)
+        assert.are.equal(1, stubs.UIManager.quit_calls)
+    end)
+    it("delivers the response of a worker that finishes while KOReader quits (#6685)", function()
+        client(function() return {status = 200, body = {access_token = "rotated"}} end):pullChanges({}, callback)
+        child(123)
+        finish_after = 2
+        stubs.UIManager:quit()
+        assert.are.equal(1, #replies)
+        assert.is_true(replies[1].ok)
+        assert.are.equal("rotated", replies[1].body.access_token)
+        assert.is_nil(require("lfs").attributes(result_path))
+    end)
+    it("kills a worker still running after the exit grace period and quits (#6685)", function()
+        client(function() return {status = 200} end):pullChanges({}, callback)
+        stubs.UIManager:quit()
+        assert.are.equal(50, slept)
+        assert.are.equal(1, terminated)
+        assert.are.equal(1, stubs.UIManager.quit_calls)
+    end)
+    it("quits without waiting when no worker is running (#6685)", function()
+        client(function() return {status = 200} end):pullChanges({}, callback)
+        exited = true
+        stubs.UIManager:drain()
+        stubs.UIManager:quit()
+        assert.are.equal(0, slept)
+        assert.are.equal(1, stubs.UIManager.quit_calls)
     end)
     it("reports a dead worker instead of leaving a callback pending forever", function()
         client(function() return {status = 200} end):pullChanges({}, callback)

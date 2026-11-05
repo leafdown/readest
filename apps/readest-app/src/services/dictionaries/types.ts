@@ -24,6 +24,8 @@ export interface DictionaryLookupContext {
   signal: AbortSignal;
   /** Tab pane to render into. Provider populates this; never touch `document` selectors. */
   container: HTMLElement;
+  /** Reveal content written while an incremental lookup is still running. */
+  onUpdate?(): void;
   /**
    * Called when the provider intercepts an in-popup link click and wants the
    * shell to navigate (push to per-tab history). Optional — providers without
@@ -46,6 +48,22 @@ export interface DictionaryLookupContext {
    * inside the bundle (MDict + its companion `.mdd`) act on this.
    */
   autoPlayPronunciation?: boolean;
+  /**
+   * Where the looked-up text was selected in the book (#5544). Only the AI
+   * context dictionary reads it; absent for words reached by in-popup links.
+   */
+  selection?: DictionarySelectionContext;
+}
+
+export interface DictionarySelectionContext {
+  /** Text right before the selection (its paragraph and the previous one). */
+  before: string;
+  /** Text right after the selection (its paragraph and the next one). */
+  after: string;
+  bookTitle?: string;
+  bookAuthor?: string;
+  /** Language to explain the selection in: the book's translation target. */
+  targetLang?: string;
 }
 
 export type DictionaryLookupOutcome =
@@ -217,12 +235,31 @@ export interface DictionarySettings {
    * it; nothing is spoken when the entry has no recording.
    */
   autoPlayPronunciation?: boolean;
+  /**
+   * Save every word looked up in the dictionary popup to the vocabulary
+   * builder with its sentence (#789). Unset means on.
+   */
+  saveLookupsToVocabulary?: boolean;
+  /** Use a full-screen native dictionary on iOS; unset keeps the compact presentation. */
+  systemDictionaryFullscreen?: boolean;
+  /**
+   * Custom translator (OpenAI-compatible) the context dictionary asks
+   * (#5544). Unset or stale ids fall back to the first available one.
+   */
+  contextTranslatorId?: string;
+  /** 'default', 'custom', or the id of a saved Custom Translator prompt. */
+  contextPromptId?: string;
+  contextSystemPrompt?: string;
+  /** Dictionary-only output cap. Zero means the provider's default. */
+  contextMaxOutputTokens?: number;
 }
 
 /** Stable ids for the built-in providers. */
 export const BUILTIN_PROVIDER_IDS = {
   wiktionary: 'builtin:wiktionary',
   wikipedia: 'builtin:wikipedia',
+  /** AI explanation of the selection in its passage, via a custom LLM translator (#5544). */
+  context: 'builtin:context',
   /**
    * "Sentinel" id for the OS-native dictionary (macOS Dictionary.app via the
    * `dict://` URL scheme; iOS `UIReferenceLibraryViewController`; Android

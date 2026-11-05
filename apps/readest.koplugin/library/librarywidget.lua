@@ -11,6 +11,7 @@
 local Device       = require("device")
 local GestureRange = require("ui/gesturerange")
 local InfoMessage  = require("ui/widget/infomessage")
+local SyncError = require("readest_syncerror")
 local InputDialog  = require("ui/widget/inputdialog")
 local Menu         = require("ui/widget/menu")
 local NetworkMgr   = require("ui/network/manager")
@@ -516,8 +517,9 @@ local function runCloudSync(opts, store, interactive)
             .. " elapsed=" .. elapsed_ms(t_sync) .. "ms")
         if interactive then
             UIManager:show(InfoMessage:new{
-                text = success and _("Books synced") or _("Books sync failed"),
-                timeout = 2,
+                text = success and _("Books synced")
+                    or SyncError.withDetail(_("Books sync failed"), msg, status),
+                timeout = success and 2 or 5,
             })
         end
         M.refresh()
@@ -701,6 +703,9 @@ function M.open(opts, internal)
 
     menu = Menu:new{
         name             = "readest_library",
+        -- CoverBrowser's list and mosaic items format authors through
+        -- `menu.ui.bookinfo` since KOReader #16148 (#6823).
+        ui               = opts.ui,
         is_borderless    = true,
         is_popout        = false,
         covers_fullscreen = true,
@@ -883,12 +888,12 @@ local function downloadCoverOnly(row, opts, after_cb)
         sync_path  = opts.sync_path,
         settings   = opts.settings,
         covers_dir = DataStorage:getSettingsDir() .. "/readest_covers",
-    }, function(success, _path_or_err, status)
+    }, function(success, path_or_err, status)
         if not success then
             local msg = (status == 404)
                 and _("No cover available on Readest.")
-                or _("Cover download failed.")
-            UIManager:show(InfoMessage:new{ text = msg, timeout = 3 })
+                or SyncError.withDetail(_("Cover download failed."), path_or_err, status)
+            UIManager:show(InfoMessage:new{ text = msg, timeout = 5 })
             if after_cb then after_cb(false) end
             return
         end
@@ -990,19 +995,63 @@ function M.handleHold(item, opts)
             sync_auth = opts.sync_auth,
             sync_path = opts.sync_path,
             settings  = opts.settings,
-        }, function(success, _msg, status)
+        }, function(success, msg, status)
             UIManager:close(progress)
             if not success then
                 UIManager:show(InfoMessage:new{
-                    text = _("Cloud removal failed.")
-                        .. " (status=" .. tostring(status) .. ")",
-                    timeout = 3,
+                    text = SyncError.withDetail(_("Cloud removal failed."), msg, status),
+                    timeout = 5,
                 })
                 if after_cb then after_cb(false) end
                 return
             end
             if after_cb then after_cb(true) end
         end)
+    end
+
+    -- Remove the book from the library everywhere. keep_file leaves the file
+    -- on this device: the tombstone hides the row, and Add to Readest can
+    -- bring the file back later.
+    local function removeFromLibrary(keep_file)
+        local function finish_local()
+            if on_local and not keep_file then removeLocalFile(row) end
+            -- Tombstone push: matches Readest's `book.deletedAt =
+            -- Date.now() + pushLibrary()` for the 'both' delete.
+            -- Peers pulling /sync see deleted_at and stop showing
+            -- the row, even though we already removed our local
+            -- copy + cloud objects.
+            local now = math.floor(os.time() * 1000)
+            M._store:upsertBook({
+                hash                  = row.hash,
+                title                 = row.title,
+                cloud_present         = 0,
+                local_present         = keep_file and 1 or 0,
+                deleted_at            = now,
+                _force_cloud_present  = true,
+                _clear_fields         = { "uploaded_at" },
+            })
+            -- Build a tombstone wire row from the in-memory entry
+            -- row (which already has format/meta_hash/etc) plus
+            -- the deleted_at + bumped updated_at.
+            local tombstone = {}
+            for k, v in pairs(row) do tombstone[k] = v end
+            tombstone.deleted_at = now
+            tombstone.updated_at = now
+            tombstone.uploaded_at = nil
+            syncbooks.pushBook(tombstone, {
+                sync_auth = opts.sync_auth,
+                sync_path = opts.sync_path,
+                settings  = opts.settings,
+            }, function() M.refresh() end)
+            M.refresh()
+        end
+        if on_cloud then
+            doCloudDelete(function(success)
+                if success then finish_local() end
+            end)
+        else
+            finish_local()
+        end
     end
 
     -- Delete sub-options (parity with BookDetailView's three-item dropdown).
@@ -1012,45 +1061,23 @@ function M.handleHold(item, opts)
             text = _("Remove this book from cloud and device?")
                 .. "\n\n" .. (row.title or ""),
             ok_text = _("Remove"),
-            ok_callback = function()
-                local function finish_local()
-                    if on_local then removeLocalFile(row) end
-                    -- Tombstone push: matches Readest's `book.deletedAt =
-                    -- Date.now() + pushLibrary()` for the 'both' delete.
-                    -- Peers pulling /sync see deleted_at and stop showing
-                    -- the row, even though we already removed our local
-                    -- copy + cloud objects.
-                    local now = math.floor(os.time() * 1000)
-                    M._store:upsertBook({
-                        hash                  = row.hash,
-                        title                 = row.title,
-                        cloud_present         = 0,
-                        local_present         = 0,
-                        deleted_at            = now,
-                        _force_cloud_present  = true,
-                    })
-                    -- Build a tombstone wire row from the in-memory entry
-                    -- row (which already has format/meta_hash/etc) plus
-                    -- the deleted_at + bumped updated_at.
-                    local tombstone = {}
-                    for k, v in pairs(row) do tombstone[k] = v end
-                    tombstone.deleted_at = now
-                    tombstone.updated_at = now
-                    syncbooks.pushBook(tombstone, {
-                        sync_auth = opts.sync_auth,
-                        sync_path = opts.sync_path,
-                        settings  = opts.settings,
-                    }, function() M.refresh() end)
-                    M.refresh()
-                end
-                if on_cloud then
-                    doCloudDelete(function() finish_local() end)
-                else
-                    finish_local()
-                end
-            end,
+            ok_callback = function() removeFromLibrary(false) end,
         })
     end)
+    -- local_present can outlive the file, and this action removes the cloud
+    -- copy, so check the file itself: it may be the only copy left.
+    local lfs = require("libs/libkoreader-lfs")
+    if row.file_path and lfs.attributes(row.file_path, "mode") == "file" then
+        add_row(_("Remove from Library, Keep File"), function()
+            close()
+            UIManager:show(ConfirmBox:new{
+                text = _("Remove this book from your library and the cloud? The file stays on this device.")
+                    .. "\n\n" .. (row.title or ""),
+                ok_text = _("Remove"),
+                ok_callback = function() removeFromLibrary(true) end,
+            })
+        end)
+    end
     if on_cloud then
         add_row(_("Remove from Cloud Only"), function()
             close()
@@ -1121,8 +1148,7 @@ function M.handleHold(item, opts)
                     if status == 403 and msg and msg:find("quota", 1, true) then
                         text = _("Storage quota exceeded.")
                     else
-                        text = _("Upload failed.")
-                            .. " (" .. tostring(msg or status) .. ")"
+                        text = SyncError.withDetail(_("Upload failed."), msg, status)
                     end
                     UIManager:show(InfoMessage:new{ text = text, timeout = 4 })
                     return

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { IoMdCloseCircleOutline } from 'react-icons/io';
 import { MdInfoOutline } from 'react-icons/md';
@@ -26,6 +26,9 @@ export default function BookshelfFilterEditor({
   const [showHelp, setShowHelp] = useState(false);
   const helpButtonRef = useRef<HTMLButtonElement>(null);
   const addRuleRef = useRef<HTMLButtonElement>(null);
+  const valuesId = useId();
+  const builtInFields = fields.filter((f) => !f.id.startsWith('calibre:'));
+  const calibreFields = fields.filter((f) => f.id.startsWith('calibre:'));
   const changeChild = (index: number, node: BookshelfRule | BookshelfFilterGroup) =>
     onChange({
       ...group,
@@ -131,11 +134,22 @@ export default function BookshelfFilterEditor({
                         })}
                       </option>
                     )}
-                    {fields.map((field) => (
+                    {builtInFields.map((field) => (
                       <option key={field.id} value={field.id}>
-                        {field.id.startsWith('calibre:') ? field.label : _(field.label)}
+                        {_(field.label)}
                       </option>
                     ))}
+                    {calibreFields.length > 0 && (
+                      // Calibre columns can share a built-in field's name
+                      // ("Pages"), so they get their own group.
+                      <optgroup label='Calibre'>
+                        {calibreFields.map((field) => (
+                          <option key={field.id} value={field.id}>
+                            {field.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
                   </select>
                   <select
                     aria-label={_('Filter comparison')}
@@ -221,6 +235,11 @@ export default function BookshelfFilterEditor({
                       <input
                         aria-label={_('Filter value')}
                         className='input eink-bordered border-base-200 w-full min-w-0'
+                        list={
+                          fields.find((f) => f.id === child.field)?.values?.length
+                            ? `${valuesId}-${index}`
+                            : undefined
+                        }
                         type={
                           child.kind === 'number'
                             ? 'number'
@@ -242,6 +261,13 @@ export default function BookshelfFilterEditor({
                         }
                       />
                     ))}
+                  <datalist id={`${valuesId}-${index}`}>
+                    {fields
+                      .find((f) => f.id === child.field)
+                      ?.values?.map((value) => (
+                        <option key={value} value={value} />
+                      ))}
+                  </datalist>
                 </div>
               )}
             </div>

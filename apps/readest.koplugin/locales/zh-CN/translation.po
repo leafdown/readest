@@ -185,6 +185,12 @@ msgstr "从云端和设备移除这本书？"
 msgid "Remove"
 msgstr "移除"
 
+msgid "Remove from Library, Keep File"
+msgstr "从书库移除,保留文件"
+
+msgid "Remove this book from your library and the cloud? The file stays on this device."
+msgstr "要从书库和云端移除这本书吗?文件会保留在此设备上。"
+
 msgid "Remove from Cloud Only"
 msgstr "仅从云端移除"
 
@@ -287,14 +293,14 @@ msgstr "没有打开的书籍"
 msgid "Uploaded to Readest:"
 msgstr "已上传到 Readest："
 
+msgid "Auto sync"
+msgstr "自动同步"
+
 msgid "Log in Readest Account"
 msgstr "登录 Readest 账户"
 
 msgid "Log out as %1"
 msgstr "退出登录（%1）"
-
-msgid "Auto sync"
-msgstr "自动同步"
 
 msgid "Readest library"
 msgstr "Readest 书库"
@@ -337,9 +343,6 @@ msgstr "检查更新"
 
 msgid "Please login first"
 msgstr "请先登录"
-
-msgid "Please configure Readest settings first"
-msgstr "请先配置 Readest 设置"
 
 msgid "(none)"
 msgstr "（无）"
@@ -506,9 +509,6 @@ msgstr "完整同步：正在拉取所有标注..."
 msgid "Pulling annotations..."
 msgstr "正在拉取标注..."
 
-msgid "Authentication failed, please login again"
-msgstr "认证失败，请重新登录"
-
 msgid "Failed to pull annotations"
 msgstr "拉取标注失败"
 
@@ -521,11 +521,17 @@ msgstr "已拉取 %1 条标注"
 msgid "Your Readest session has expired. Please log in again."
 msgstr "Readest 登录已过期，请重新登录。"
 
+msgid "Authentication failed, please login again"
+msgstr "认证失败，请重新登录"
+
 msgid "Login"
 msgstr "登录"
 
 msgid "Please enter both email and password"
 msgstr "请输入邮箱和密码"
+
+msgid "Sign in with a code"
+msgstr "使用验证码登录"
 
 msgid "Please configure Supabase URL and API key first"
 msgstr "请先配置 Supabase URL 和 API key"
@@ -533,11 +539,17 @@ msgstr "请先配置 Supabase URL 和 API key"
 msgid "Logging in..."
 msgstr "正在登录..."
 
+msgid "Login failed: %1"
+msgstr "登录失败：%1"
+
 msgid "Successfully logged in to Readest"
 msgstr "已成功登录 Readest"
 
-msgid "Login failed: %1"
-msgstr "登录失败：%1"
+msgid "Scan the QR code with a phone signed in to Readest, or open %1 and enter this code:\n\n%2"
+msgstr "请用已登录 Readest 的手机扫描二维码，或打开 %1 并输入以下验证码：\n\n%2"
+
+msgid "The code expired. Please try again."
+msgstr "验证码已过期，请重试。"
 
 msgid "Logged out from Readest"
 msgstr "已退出 Readest"
@@ -566,8 +578,65 @@ msgstr "拉取阅读进度失败"
 msgid "Reading progress synchronized"
 msgstr "阅读进度已同步"
 
+msgid "Saved reading position cannot be used with this copy of the book"
+msgstr "保存的阅读位置无法用于此书籍副本"
+
 msgid "No saved reading progress found for this book"
 msgstr "未找到此书籍的已保存阅读进度"
+
+msgid "Sync was cancelled."
+msgstr "同步已取消。"
+
+msgid "The connection timed out. Please try again."
+msgstr "连接超时，请重试。"
+
+msgid "The network is unreachable. Please check the internet connection."
+msgstr "网络不可达，请检查网络连接。"
+
+msgid "The server could not be found. Please check the internet connection."
+msgstr "找不到服务器，请检查网络连接。"
+
+msgid "The server refused the connection. Please try again later."
+msgstr "服务器拒绝了连接，请稍后再试。"
+
+msgid "The connection was interrupted. Please try again."
+msgstr "连接已中断，请重试。"
+
+msgid "A secure connection to the server could not be established."
+msgstr "无法与服务器建立安全连接。"
+
+msgid "Authentication failed. Please log in again."
+msgstr "认证失败，请重新登录。"
+
+msgid "The account changed during sync."
+msgstr "同步期间账户已更改。"
+
+msgid "The file was not found in the cloud."
+msgstr "云端未找到该文件。"
+
+msgid "The local file is missing."
+msgstr "本地文件丢失。"
+
+msgid "An internal error occurred. Please try again."
+msgstr "发生内部错误，请重试。"
+
+msgid "Access denied."
+msgstr "访问被拒绝。"
+
+msgid "Not found on the server."
+msgstr "服务器上未找到。"
+
+msgid "The file is too large."
+msgstr "文件过大。"
+
+msgid "Too many requests. Please try again later."
+msgstr "请求过于频繁，请稍后再试。"
+
+msgid "The server is temporarily unavailable. Please try again later."
+msgstr "服务器暂时不可用，请稍后再试。"
+
+msgid "The request failed. Please try again."
+msgstr "请求失败，请重试。"
 
 msgid "Reading statistics are up to date"
 msgstr "阅读统计已是最新"

@@ -7,6 +7,7 @@ import {
   bookshelfName,
 } from '@/services/bookshelves/definitions';
 import { evaluateBookshelves, matchBookshelfFilter } from '@/services/bookshelves/evaluate';
+import { discoverBookshelfFields } from '@/services/bookshelves/fields';
 
 const book = (hash: string, tags: string[] = []): Book => ({
   hash,
@@ -325,6 +326,104 @@ describe('bookshelf evaluation', () => {
     expect(matchBookshelfFilter(book('a'), nested)).toBe(false);
     expect(matchBookshelfFilter(book('b', ['fiction']), nested)).toBe(true);
   });
+  it('filters on Calibre columns pushed by the calibre plugin', () => {
+    // The metadata the plugin writes to the books row (wire.py::calibre_columns).
+    const pushed = {
+      ...book('pushed'),
+      metadata: {
+        title: 'pushed',
+        author: 'Author',
+        language: 'en',
+        calibreColumns: [
+          { label: 'shelves', name: 'Shelves', datatype: 'text', value: ['TBR', 'Favourites'] },
+        ],
+      },
+    };
+    const field = discoverBookshelfFields([pushed]).find((f) => f.id === 'calibre:shelves')!;
+    expect(field).toMatchObject({ label: 'Shelves', kind: 'collection' });
+    const tbr = {
+      ...filter,
+      children: [
+        {
+          type: 'rule' as const,
+          field: field.id,
+          kind: field.kind,
+          operator: 'contains' as const,
+          value: 'tbr',
+        },
+      ],
+    };
+    expect(matchBookshelfFilter(pushed, tbr)).toBe(true);
+    expect(matchBookshelfFilter(book('other'), tbr)).toBe(false);
+  });
+  it('filters by download status: local only, downloaded, or cloud only', () => {
+    const books = [
+      { ...book('local'), downloadedAt: 1 },
+      { ...book('downloaded'), downloadedAt: 1, uploadedAt: 1 },
+      { ...book('cloud'), uploadedAt: 1 },
+      { ...book('abs'), format: 'ABS' as const, absDownloadedAt: 1, uploadedAt: 1 },
+      { ...book('streaming'), format: 'ABS' as const, filePath: 'abs://server/item' },
+      { ...book('referenced'), filePath: '/books/referenced.epub' },
+    ];
+    const matching = (value: string) =>
+      books
+        .filter((b) =>
+          matchBookshelfFilter(b, {
+            ...filter,
+            children: [
+              {
+                type: 'rule' as const,
+                field: 'downloadStatus',
+                kind: 'text' as const,
+                operator: 'equals' as const,
+                value,
+              },
+            ],
+          }),
+        )
+        .map((b) => b.hash);
+    expect(matching('localOnly')).toEqual(['local', 'referenced']);
+    expect(matching('downloaded')).toEqual(['downloaded', 'abs']);
+    expect(matching('cloudOnly')).toEqual(['cloud']);
+  });
+  it('collects the library values of list-like fields for the value picker', () => {
+    const books = [
+      {
+        ...book('a', ['Fiction', 'Sci-Fi']),
+        groupName: 'Shelf A',
+        metadata: {
+          title: 'a',
+          author: 'Author',
+          language: 'en',
+          subject: ['Space'],
+          calibreColumns: [
+            { label: 'shelves', name: 'Shelves', datatype: 'text', value: ['TBR'] },
+            { label: 'notes', name: 'Notes', datatype: 'comments', value: '<p>Long</p>' },
+          ],
+        },
+      },
+      {
+        ...book('b', ['Fiction']),
+        metadata: {
+          title: 'b',
+          author: 'Author',
+          language: 'en',
+          calibreColumns: [
+            { label: 'shelves', name: 'Shelves', datatype: 'text', value: ['Favourites', 'TBR'] },
+          ],
+        },
+      },
+    ];
+    const values = Object.fromEntries(
+      discoverBookshelfFields(books).map((field) => [field.id, field.values]),
+    );
+    expect(values['tags']).toEqual(['Fiction', 'Sci-Fi']);
+    expect(values['subjects']).toEqual(['Space']);
+    expect(values['group']).toEqual(['Shelf A']);
+    expect(values['calibre:shelves']).toEqual(['Favourites', 'TBR']);
+    expect(values['calibre:notes']).toBeUndefined();
+    expect(values['title']).toBeUndefined();
+  });
   it('uses independent sorting directions and ignores legacy carousel limits', () => {
     const books = [
       { ...book('a'), title: 'A', createdAt: 1 },
@@ -403,6 +502,8 @@ describe('field operators', () => {
     ['progress', 'number', 'gte', 25, true],
     ['progress', 'number', 'lt', 25, false],
     ['progress', 'number', 'lte', 25, true],
+    ['pages', 'number', 'gte', 100, true],
+    ['pages', 'number', 'gt', 100, false],
     ['created', 'date', 'equals', '2025-06-15', true],
     ['created', 'date', 'gt', '2025-06-14', true],
     ['created', 'date', 'lte', '2025-06-15', true],
@@ -419,6 +520,17 @@ describe('field operators', () => {
         children: [{ type: 'rule', field, kind, operator, value }],
       }),
     ).toBe(expected);
+  });
+  it('filters an unopened book by the page count recorded at import (#6662)', () => {
+    const pages = (b: Book) =>
+      matchBookshelfFilter(b, {
+        type: 'group',
+        match: 'all',
+        children: [{ type: 'rule', field: 'pages', kind: 'number', operator: 'gt', value: 100 }],
+      });
+    expect(pages({ ...book('Long'), pageCount: 340 })).toBe(true);
+    expect(pages({ ...book('Short'), pageCount: 40 })).toBe(false);
+    expect(pages(book('Unknown'))).toBe(false);
   });
   // A book without the field satisfies a negated condition: "Tags does not
   // contain kids" must keep untagged books rather than hide them.

@@ -239,6 +239,40 @@ pub struct GetSafeAreaInsetsResponse {
     /// platform does not report it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bottom_corner_radius: Option<f64>,
+    /// Whether the device is an iPhone Duo (foldable); absent off iOS.
+    #[serde(
+        rename = "isIPhoneDuo",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub is_iphone_duo: Option<bool>,
+    /// iOS: whether the root view controller currently hides the status bar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_bar_hidden: Option<bool>,
+    /// iPhone Duo: hinge status and folding region; absent elsewhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fold: Option<FoldState>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FoldState {
+    /// `closed`, `partial`, `open` or `unknown`.
+    pub status: String,
+    /// Whether the folding region currently divides the display.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region_active: Option<bool>,
+    /// The folding region in window points (CSS px).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<FoldRegion>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct FoldRegion {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -257,6 +291,7 @@ pub struct SetScreenWakeLockRequest {
 #[serde(rename_all = "camelCase")]
 pub struct SetScreenBrightnessRequest {
     pub brightness: f64, // 0.0 to 1.0
+    pub persist: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -321,6 +356,35 @@ pub struct OpenExternalUrlResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ShowLookupPopoverRequest {
     pub word: String,
+    /// iOS only. Omitted by older clients to keep the compact presentation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full_screen: Option<bool>,
+}
+
+/// Android: an app that handles `ACTION_PROCESS_TEXT`, for the lookup app picker.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LookupApp {
+    pub package_name: String,
+    pub class_name: String,
+    pub label: String,
+    pub selected: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetLookupAppsResponse {
+    pub apps: Vec<LookupApp>,
+}
+
+/// Android: the app lookups go to; both fields omitted clears the choice.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetLookupAppRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub class_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -437,6 +501,10 @@ pub struct WebBrowserRequest {
     pub download_dir: String,
     pub capture_script: String,
     #[serde(default)]
+    pub select_image: Option<bool>,
+    #[serde(default)]
+    pub image_selection_script: String,
+    #[serde(default)]
     pub background: Option<String>,
     #[serde(default)]
     pub foreground: Option<String>,
@@ -454,6 +522,26 @@ pub struct WebBrowserResponse {
     pub open_book_hash: Option<String>,
     #[serde(default)]
     pub page: Option<WebBrowserPage>,
+    #[serde(default)]
+    pub image: Option<WebBrowserImage>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WebBrowserImage {
+    pub url: String,
+    pub page_url: String,
+}
+
+impl WebBrowserImage {
+    /// Selection never transfers page-local data/blob URLs or native schemes.
+    pub fn is_valid(&self) -> bool {
+        [&self.url, &self.page_url].iter().all(|value| {
+            tauri::Url::parse(value).is_ok_and(|url| {
+                matches!(url.scheme(), "http" | "https") && url.host_str().is_some()
+            })
+        })
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -540,6 +628,41 @@ pub struct GetSecureItemResponse {
 pub struct RefreshEinkScreenResponse {
     pub success: bool,
     pub error: Option<String>,
+}
+
+/// Capability probe for a deep e-ink full refresh. `supported: false` means no
+/// known vendor mechanism is present on this device (e.g. a non-e-ink Android
+/// phone, or a panel we cannot drive), so the UI should not offer the option.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EinkRefreshSupportedResponse {
+    pub supported: bool,
+}
+
+/// `isBoox` is a device-identity check (always available); `rawDrawing` is
+/// true only when this build was compiled against the BOOX Pen SDK (the
+/// `booxPen` Gradle flavor) and the SDK reports it can drive raw drawing on
+/// this device/firmware. JS treats `rawDrawing: false` as "use the generic
+/// pointer backend", regardless of why.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryPenCapabilitiesResponse {
+    pub is_boox: bool,
+    pub raw_drawing: bool,
+}
+
+/// Starts (or restarts) BOOX raw drawing over a region of the webview, in CSS
+/// px. Width and color style the SDK's low-latency preview only; the stored
+/// stroke is drawn by the web canvas.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartRawDrawingRequest {
+    pub left: f64,
+    pub top: f64,
+    pub width: f64,
+    pub height: f64,
+    pub stroke_width: f64,
+    pub stroke_color: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -631,6 +754,8 @@ pub struct BookshelfWidgetCatalogLabels {
     pub columns: String,
     pub show_titles: String,
     pub show_shelf_name: String,
+    pub header_size: String,
+    pub show_tts_bar: String,
     pub cancel: String,
     pub save: String,
     pub edit: String,
@@ -643,6 +768,93 @@ pub struct BookshelfWidgetCatalogLabels {
 pub struct BookshelfWidgetCatalog {
     pub shelves: Vec<BookshelfWidgetCatalogShelf>,
     pub labels: BookshelfWidgetCatalogLabels,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateReadingWidgetRequest {
+    pub app_widget_id: i32,
+    /// Empty means "nothing currently reading".
+    #[serde(default)]
+    pub hash: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub percent: u8,
+    #[serde(default)]
+    pub cover_path: String,
+    /// The text stats to show in order, already localized by JS.
+    #[serde(default)]
+    pub stats: Vec<String>,
+    #[serde(default)]
+    pub header_text: String,
+    pub empty_title: String,
+    #[serde(default)]
+    pub is_eink: bool,
+    #[serde(default)]
+    pub tts: Option<BookshelfWidgetTts>,
+}
+
+/// The cover, if any, that could not be written, so the caller can retry.
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct UpdateReadingWidgetResponse {
+    pub failed: u32,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// One placed widget instance's display toggles.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadingWidgetInstanceSettings {
+    pub app_widget_id: i32,
+    #[serde(default)]
+    pub show_time_left: bool,
+    #[serde(default = "default_true")]
+    pub show_page_count: bool,
+    #[serde(default)]
+    pub show_pages_remaining: bool,
+    #[serde(default = "default_true")]
+    pub show_header: bool,
+    #[serde(default = "default_true")]
+    pub show_percent: bool,
+    #[serde(default)]
+    pub reference_pages: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadingWidgetCatalogLabels {
+    pub title: String,
+    pub show_header: String,
+    pub header_size: String,
+    pub show_tts_bar: String,
+    pub reference_pages: String,
+    pub show_percent: String,
+    pub show_time_left: String,
+    pub show_page_count: String,
+    pub show_pages_remaining: String,
+    pub text_size: String,
+    pub cancel: String,
+    pub save: String,
+}
+
+/// What the native configure screen shows, translated by the app.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadingWidgetCatalog {
+    pub labels: ReadingWidgetCatalogLabels,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetReadingWidgetInstancesResponse {
+    pub instances: Vec<ReadingWidgetInstanceSettings>,
 }
 
 /// Region of the webview to snapshot for the mesh page-curl (#555),
@@ -719,4 +931,116 @@ pub struct WebBrowserCookiesRequest {
 #[derive(Debug, Deserialize)]
 pub struct WebBrowserCookiesResponse {
     pub cookies: String,
+}
+
+/// Android: whether AnkiDroid is installed and Readest may use its provider (#789).
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnkiStatusResponse {
+    pub installed: bool,
+    pub granted: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnkiPermissionResponse {
+    pub granted: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnkiDeck {
+    pub id: i64,
+    pub name: String,
+}
+
+/// `error` is "permission" or "not_ready" when AnkiDroid can't be read.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnkiListDecksResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decks: Option<Vec<AnkiDeck>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnkiReadDeckRequest {
+    /// A deck and its subdecks.
+    pub deck_ids: Vec<i64>,
+    pub with_cards: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnkiNoteRow {
+    pub id: i64,
+    pub fields: Vec<String>,
+    pub tags: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnkiCardRow {
+    pub note_id: i64,
+    pub card_type: i32,
+    pub interval: i64,
+}
+
+/// `cards` is omitted on AnkiDroid older than 2.24, which has no cards query.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnkiReadDeckResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<Vec<AnkiNoteRow>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cards: Option<Vec<AnkiCardRow>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnkiOutgoingNote {
+    pub fields: Vec<String>,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnkiAddNotesRequest {
+    pub deck_name: String,
+    pub notes: Vec<AnkiOutgoingNote>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnkiAddNotesResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub added: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnkiTagUpdate {
+    pub id: i64,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnkiUpdateTagsRequest {
+    pub notes: Vec<AnkiTagUpdate>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnkiUpdateTagsResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }

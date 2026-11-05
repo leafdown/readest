@@ -185,6 +185,12 @@ msgstr "این کتاب از فضای ابری و دستگاه حذف شود؟"
 msgid "Remove"
 msgstr "حذف"
 
+msgid "Remove from Library, Keep File"
+msgstr "حذف از کتابخانه، نگه‌داشتن فایل"
+
+msgid "Remove this book from your library and the cloud? The file stays on this device."
+msgstr "این کتاب از کتابخانه و فضای ابری شما حذف شود؟ فایل روی این دستگاه می‌ماند."
+
 msgid "Remove from Cloud Only"
 msgstr "فقط حذف از فضای ابری"
 
@@ -287,14 +293,14 @@ msgstr "هیچ کتابی باز نیست"
 msgid "Uploaded to Readest:"
 msgstr "در Readest بارگذاری شد:"
 
+msgid "Auto sync"
+msgstr "همگام‌سازی خودکار"
+
 msgid "Log in Readest Account"
 msgstr "ورود به حساب Readest"
 
 msgid "Log out as %1"
 msgstr "خروج از حساب %1"
-
-msgid "Auto sync"
-msgstr "همگام‌سازی خودکار"
 
 msgid "Readest library"
 msgstr "کتابخانه Readest"
@@ -337,9 +343,6 @@ msgstr "بررسی به‌روزرسانی"
 
 msgid "Please login first"
 msgstr "ابتدا وارد شوید"
-
-msgid "Please configure Readest settings first"
-msgstr "ابتدا تنظیمات Readest را پیکربندی کنید"
 
 msgid "(none)"
 msgstr "(هیچ‌کدام)"
@@ -506,9 +509,6 @@ msgstr "همگام‌سازی کامل: در حال دریافت تمام یاد
 msgid "Pulling annotations..."
 msgstr "در حال دریافت یادداشت‌ها…"
 
-msgid "Authentication failed, please login again"
-msgstr "احراز هویت ناموفق بود، دوباره وارد شوید"
-
 msgid "Failed to pull annotations"
 msgstr "دریافت یادداشت‌ها ناموفق بود"
 
@@ -521,11 +521,17 @@ msgstr "%1 یادداشت دریافت شد"
 msgid "Your Readest session has expired. Please log in again."
 msgstr "نشست Readest شما منقضی شده است. لطفاً دوباره وارد شوید."
 
+msgid "Authentication failed, please login again"
+msgstr "احراز هویت ناموفق بود، دوباره وارد شوید"
+
 msgid "Login"
 msgstr "ورود"
 
 msgid "Please enter both email and password"
 msgstr "لطفاً ایمیل و رمز عبور را وارد کنید"
+
+msgid "Sign in with a code"
+msgstr "ورود با کد"
 
 msgid "Please configure Supabase URL and API key first"
 msgstr "ابتدا آدرس Supabase و کلید API را پیکربندی کنید"
@@ -533,11 +539,17 @@ msgstr "ابتدا آدرس Supabase و کلید API را پیکربندی کن�
 msgid "Logging in..."
 msgstr "در حال ورود…"
 
+msgid "Login failed: %1"
+msgstr "ورود ناموفق: %1"
+
 msgid "Successfully logged in to Readest"
 msgstr "با موفقیت وارد Readest شدید"
 
-msgid "Login failed: %1"
-msgstr "ورود ناموفق: %1"
+msgid "Scan the QR code with a phone signed in to Readest, or open %1 and enter this code:\n\n%2"
+msgstr "کد QR را با تلفنی که وارد Readest شده است اسکن کنید، یا %1 را باز کنید و این کد را وارد کنید:\n\n%2"
+
+msgid "The code expired. Please try again."
+msgstr "کد منقضی شده است. لطفاً دوباره تلاش کنید."
 
 msgid "Logged out from Readest"
 msgstr "از Readest خارج شدید"
@@ -566,8 +578,65 @@ msgstr "دریافت پیشرفت مطالعه ناموفق بود"
 msgid "Reading progress synchronized"
 msgstr "پیشرفت مطالعه همگام‌سازی شد"
 
+msgid "Saved reading position cannot be used with this copy of the book"
+msgstr "موقعیت خواندن ذخیره‌شده را نمی‌توان با این نسخه از کتاب استفاده کرد"
+
 msgid "No saved reading progress found for this book"
 msgstr "پیشرفت مطالعه ذخیره‌شده‌ای برای این کتاب یافت نشد"
+
+msgid "Sync was cancelled."
+msgstr "همگام‌سازی لغو شد."
+
+msgid "The connection timed out. Please try again."
+msgstr "زمان اتصال به پایان رسید. لطفاً دوباره تلاش کنید."
+
+msgid "The network is unreachable. Please check the internet connection."
+msgstr "شبکه در دسترس نیست. لطفاً اتصال اینترنت را بررسی کنید."
+
+msgid "The server could not be found. Please check the internet connection."
+msgstr "سرور پیدا نشد. لطفاً اتصال اینترنت را بررسی کنید."
+
+msgid "The server refused the connection. Please try again later."
+msgstr "سرور اتصال را رد کرد. لطفاً بعداً دوباره تلاش کنید."
+
+msgid "The connection was interrupted. Please try again."
+msgstr "اتصال قطع شد. لطفاً دوباره تلاش کنید."
+
+msgid "A secure connection to the server could not be established."
+msgstr "برقراری اتصال امن با سرور ممکن نشد."
+
+msgid "Authentication failed. Please log in again."
+msgstr "احراز هویت ناموفق بود. لطفاً دوباره وارد شوید."
+
+msgid "The account changed during sync."
+msgstr "حساب در حین همگام‌سازی تغییر کرد."
+
+msgid "The file was not found in the cloud."
+msgstr "فایل در فضای ابری پیدا نشد."
+
+msgid "The local file is missing."
+msgstr "فایل محلی وجود ندارد."
+
+msgid "An internal error occurred. Please try again."
+msgstr "خطای داخلی رخ داد. لطفاً دوباره تلاش کنید."
+
+msgid "Access denied."
+msgstr "دسترسی رد شد."
+
+msgid "Not found on the server."
+msgstr "در سرور پیدا نشد."
+
+msgid "The file is too large."
+msgstr "فایل بیش از حد بزرگ است."
+
+msgid "Too many requests. Please try again later."
+msgstr "درخواست‌ها بیش از حد زیاد است. لطفاً بعداً دوباره تلاش کنید."
+
+msgid "The server is temporarily unavailable. Please try again later."
+msgstr "سرور موقتاً در دسترس نیست. لطفاً بعداً دوباره تلاش کنید."
+
+msgid "The request failed. Please try again."
+msgstr "درخواست ناموفق بود. لطفاً دوباره تلاش کنید."
 
 msgid "Reading statistics are up to date"
 msgstr "آمار مطالعه به‌روز است"

@@ -18,7 +18,7 @@ interface AuthContextType {
   user: User | null;
   login: (token: string, user: User) => void;
   logout: () => void;
-  refresh: () => void;
+  refresh: () => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -96,7 +96,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       await supabase.auth.refreshSession();
     } catch {
     } finally {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: 'local' });
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       setToken(null);
@@ -106,8 +106,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const refresh = useCallback(async () => {
     try {
-      await supabase.auth.refreshSession();
-    } catch {}
+      const { data, error } = await supabase.auth.refreshSession();
+      return !error && !!data.session;
+    } catch {
+      return false;
+    }
   }, []);
 
   const value = useMemo(

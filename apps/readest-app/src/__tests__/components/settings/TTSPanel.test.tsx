@@ -11,6 +11,17 @@ const state = vi.hoisted(() => ({
     ttsHighlightOptions: { style: 'highlight', color: '#808080' },
     ttsSkipInlineAnnotations: false,
   } as unknown as ViewSettings,
+  token: null as string | null,
+  user: null as { id: string } | null,
+  push: vi.fn(),
+}));
+
+vi.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({ token: state.token, user: state.user }),
+}));
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: state.push }),
 }));
 
 vi.mock('@/hooks/useTranslation', () => ({
@@ -30,16 +41,17 @@ vi.mock('@/store/readerStore', () => ({
   useReaderStore: () => ({ getViewSettings: () => state.viewSettings }),
 }));
 
-vi.mock('@/store/settingsStore', () => ({
-  useSettingsStore: () => ({
+vi.mock('@/store/settingsStore', () => {
+  const store = {
     settings: {
       globalViewSettings: state.viewSettings,
       globalReadSettings: { customTtsHighlightColors: [] },
     },
     setSettings: vi.fn(),
     saveSettings: vi.fn(),
-  }),
-}));
+  };
+  return { useSettingsStore: Object.assign(() => store, { getState: () => store }) };
+});
 
 vi.mock('@/hooks/useResetSettings', () => ({
   useResetViewSettings: () => vi.fn(),
@@ -50,7 +62,7 @@ vi.mock('@/helpers/settings', () => ({
 }));
 
 vi.mock('@/services/tts/providers/bookCacheStore', () => ({
-  getTTSCacheConfig: () => ({ enabled: false, syncEnabled: false, budgetMB: 200 }),
+  getTTSCacheConfig: () => ({ enabled: false, budgetMB: 200 }),
   setTTSCacheConfig: vi.fn(),
 }));
 
@@ -58,8 +70,47 @@ vi.mock('@/components/settings/theme/TTSHighlightStyleEditor', () => ({
   default: () => null,
 }));
 
+const ARIA = { id: 'en-US-AriaNeural', name: 'Aria', lang: 'en-US', gender: 'female' as const };
+vi.mock('@/services/tts/voiceLibrary', () => ({
+  loadVoiceLibrary: async () => ({
+    languages: ['en', 'fr'],
+    getVoices: async (lang: string) =>
+      lang === 'en'
+        ? [{ id: 'edge-tts', name: 'Edge TTS', engine: 'edge-tts', voices: [ARIA] }]
+        : [],
+  }),
+}));
+
 import { saveViewSettings } from '@/helpers/settings';
+import { TTSUtils } from '@/services/tts/TTSUtils';
 import TTSPanel from '@/components/settings/TTSPanel';
+
+describe('TTSPanel voice library row', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    state.uiLocale = 'en-US';
+  });
+
+  afterEach(cleanup);
+
+  it("names the language's default voice, else says it is automatic", async () => {
+    const { unmount } = render(<TTSPanel bookKey='' onRegisterReset={vi.fn()} />);
+    expect(await screen.findByText('English · Automatic')).toBeTruthy();
+    unmount();
+    TTSUtils.setDefaultVoice('edge-tts', 'en', ARIA.id);
+    render(<TTSPanel bookKey='' onRegisterReset={vi.fn()} />);
+    expect(await screen.findByText('English · Aria')).toBeTruthy();
+  });
+
+  it('opens the voice library, whose pick names the new default on return', async () => {
+    render(<TTSPanel bookKey='' onRegisterReset={vi.fn()} />);
+    fireEvent.click(await screen.findByText('Voice Library'));
+    fireEvent.click(await screen.findByText('Aria'));
+    expect(TTSUtils.getDefaultVoice('en')).toEqual({ engine: 'edge-tts', voiceId: ARIA.id });
+    fireEvent.click(screen.getByText('TTS'));
+    expect(await screen.findByText('English · Aria')).toBeTruthy();
+  });
+});
 
 describe('TTSPanel inline reading annotations', () => {
   beforeEach(() => {
@@ -90,11 +141,74 @@ describe('TTSPanel inline reading annotations', () => {
     );
   });
 
-  it('hides the switch when the UI language is not Japanese', () => {
+  it('shows the switch when the UI language is Korean', () => {
+    state.uiLocale = 'ko';
+
+    render(<TTSPanel bookKey='book-1' onRegisterReset={vi.fn()} />);
+
+    expect(screen.getByText('Skip Parenthetical Readings')).toBeTruthy();
+  });
+
+  it('hides the switch when the UI language is not Japanese or Korean', () => {
     state.uiLocale = 'en-US';
 
     render(<TTSPanel bookKey='book-1' onRegisterReset={vi.fn()} />);
 
     expect(screen.queryByText('Skip Parenthetical Readings')).toBeNull();
+  });
+});
+
+const encode = (part: object) => Buffer.from(JSON.stringify(part)).toString('base64url');
+const sessionToken = (claims: object) => `${encode({ alg: 'none' })}.${encode(claims)}.sig`;
+
+const getCustomServicesRow = () =>
+  screen.getByText('Custom TTS Services').closest('button') as HTMLButtonElement;
+
+// Custom TTS services are premium: free and signed-out readers see the row
+// with a Premium badge that routes to the upgrade page or sign-in.
+describe('TTSPanel audio cache', () => {
+  afterEach(cleanup);
+
+  it('has no audio sync switch of its own (Book Data sync covers it)', () => {
+    const { container } = render(<TTSPanel bookKey='book-1' onRegisterReset={vi.fn()} />);
+    expect(container.querySelector("[data-setting-id='settings.tts.audioCache']")).not.toBeNull();
+    expect(container.querySelector("[data-setting-id='settings.tts.audioCacheSync']")).toBeNull();
+  });
+});
+
+describe('TTSPanel custom TTS services premium gate', () => {
+  beforeEach(() => {
+    state.token = null;
+    state.user = null;
+    state.push.mockReset();
+  });
+
+  afterEach(cleanup);
+
+  it('sends a signed-out reader to sign in', () => {
+    render(<TTSPanel bookKey='book-1' onRegisterReset={vi.fn()} />);
+    expect(getCustomServicesRow().textContent).toContain('Premium');
+    fireEvent.click(getCustomServicesRow());
+    expect(state.push).toHaveBeenCalledWith(expect.stringMatching(/^\/auth\?redirect=/));
+  });
+
+  it('sends a free user to the plans page', () => {
+    state.token = sessionToken({ plan: 'free' });
+    state.user = { id: 'u' };
+    render(<TTSPanel bookKey='book-1' onRegisterReset={vi.fn()} />);
+    fireEvent.click(getCustomServicesRow());
+    expect(state.push).toHaveBeenCalledWith(expect.stringMatching(/^\/user\?redirect=/));
+    expect(screen.queryByText('Add TTS Service')).toBeNull();
+  });
+
+  it('opens the services page for Full Customization', () => {
+    state.token = sessionToken({ plan: 'free', customization_purchased: true });
+    state.user = { id: 'u' };
+    render(<TTSPanel bookKey='book-1' onRegisterReset={vi.fn()} />);
+    expect(getCustomServicesRow().textContent).not.toContain('Premium');
+    fireEvent.click(getCustomServicesRow());
+    expect(state.push).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText('Add TTS Service'));
+    expect(screen.getByLabelText('Base URL')).toBeTruthy();
   });
 });

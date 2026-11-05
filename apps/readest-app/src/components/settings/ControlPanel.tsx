@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { useEnv } from '@/context/EnvContext';
 import { useReaderStore } from '@/store/readerStore';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -9,10 +10,11 @@ import { useEinkMode } from '@/hooks/useEinkMode';
 import { getStyles } from '@/utils/style';
 import { getMaxInlineSize } from '@/utils/config';
 import { saveSysSettings, saveViewSettings } from '@/helpers/settings';
-import { PageTurnStyle } from '@/types/book';
+import { ImageViewerGesture, PageTurnStyle } from '@/types/book';
 import { SettingsPanelPanelProp } from './SettingsDialog';
 import { annotationToolQuickActions } from '@/app/reader/components/annotator/AnnotationTools';
 import { applyPageTurnAttributes } from '@/app/reader/hooks/useCapturedTurn';
+import { resolveImageViewerGesture } from '@/app/reader/utils/iframeEventHandlers';
 import { isTauriAppPlatform } from '@/services/environment';
 import { DEFAULT_SYSTEM_SETTINGS } from '@/services/constants';
 import {
@@ -27,6 +29,7 @@ import PageTurnerSettings from './PageTurnerSettings';
 import AnnotationToolbarCustomizer from './AnnotationToolbarCustomizer';
 import { DEFAULT_ANNOTATION_TOOLBAR_ITEMS } from '@/utils/annotationToolbar';
 import { canShareText } from '@/utils/share';
+import { useEinkRefreshSupported } from '@/hooks/useEinkRefreshSupported';
 import { optInTelemetry, optOutTelemetry } from '@/utils/telemetry';
 import KeyboardShortcutsSettings from './KeyboardShortcutsSettings';
 
@@ -47,6 +50,9 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
   const [showPaginationButtons, setShowPaginationButtons] = useState(
     viewSettings.showPaginationButtons,
   );
+  const [stablePageNumbers, setStablePageNumbers] = useState(
+    viewSettings.stablePageNumbers ?? true,
+  );
   const [isDisableClick, setIsDisableClick] = useState(viewSettings.disableClick);
   const [isDisableSwipe, setIsDisableSwipe] = useState(viewSettings.disableSwipe);
   const [disablePullDownToBookmark, setDisablePullDownToBookmark] = useState(
@@ -55,6 +61,9 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
   const [fullscreenClickArea, setFullscreenClickArea] = useState(viewSettings.fullscreenClickArea);
   const [swapClickArea, setSwapClickArea] = useState(viewSettings.swapClickArea);
   const [isDisableDoubleClick, setIsDisableDoubleClick] = useState(viewSettings.disableDoubleClick);
+  const [imageViewerGesture, setImageViewerGesture] = useState(
+    resolveImageViewerGesture(viewSettings, !!bookData?.isFixedLayout),
+  );
   const [enableAnnotationQuickActions, setEnableAnnotationQuickActions] = useState(
     viewSettings.enableAnnotationQuickActions,
   );
@@ -71,6 +80,14 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
   const [pageTurnStyle, setPageTurnStyle] = useState(viewSettings.pageTurnStyle || 'push');
   const [isEink, setIsEink] = useState(viewSettings.isEink);
   const [isColorEink, setIsColorEink] = useState(viewSettings.isColorEink);
+  const [einkAutoRefreshInterval, setEinkAutoRefreshInterval] = useState(
+    viewSettings.einkAutoRefreshInterval,
+  );
+  // Whether this device exposes a full-refresh mechanism we can drive. The
+  // "Auto Full Refresh" row is only offered when true, so it never appears on
+  // panels (or phones) where the deep refresh silently does nothing.
+  const einkRefreshSupported = useEinkRefreshSupported();
+  const [alwaysShowStatusBar, setAlwaysShowStatusBar] = useState(settings.alwaysShowStatusBar);
   const [autoScreenBrightness, setAutoScreenBrightness] = useState(settings.autoScreenBrightness);
   const [swipeBrightnessGesture, setSwipeBrightnessGesture] = useState(
     settings.swipeBrightnessGesture,
@@ -78,6 +95,43 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
   const [screenWakeLock, setScreenWakeLock] = useState(settings.screenWakeLock);
   const [autohideCursor, setAutohideCursor] = useState(settings.autohideCursor);
   const [gamepadEnabled, setGamepadEnabled] = useState(settings.gamepadEnabled);
+  const [explorerThumbnails, setExplorerThumbnails] = useState(false);
+  const [explorerThumbnailsBusy, setExplorerThumbnailsBusy] = useState(true);
+  const [explorerThumbnailsError, setExplorerThumbnailsError] = useState(false);
+
+  useEffect(() => {
+    if (!appService?.isWindowsApp) return;
+    let cancelled = false;
+    invoke<boolean>('get_explorer_thumbnails_enabled')
+      .then((enabled) => {
+        if (!cancelled) {
+          setExplorerThumbnails(enabled);
+          setExplorerThumbnailsBusy(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setExplorerThumbnailsError(true);
+          setExplorerThumbnailsBusy(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [appService?.isWindowsApp]);
+
+  const toggleExplorerThumbnails = async () => {
+    setExplorerThumbnailsBusy(true);
+    setExplorerThumbnailsError(false);
+    try {
+      await invoke('set_explorer_thumbnails_enabled', { enabled: !explorerThumbnails });
+      setExplorerThumbnails(!explorerThumbnails);
+    } catch {
+      setExplorerThumbnailsError(true);
+    } finally {
+      setExplorerThumbnailsBusy(false);
+    }
+  };
   const [reverseWheelPaging, setReverseWheelPaging] = useState(settings.reverseWheelPaging);
   const [hideBookshelfPageButtons, setHideBookshelfPageButtons] = useState(
     settings.hideBookshelfPageButtons,
@@ -102,8 +156,30 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
           { value: 'curl', label: _('Page Curl') },
         ]
       : []),
+    // Only the captured and native turns draw the flip.
+    ...(isTauriAppPlatform() ? [{ value: 'flip', label: _('Page Flip') }] : []),
   ];
+  // On the web a synced flip turns as a curl.
+  const shownTurnStyle = pageTurnStyle === 'flip' && !isTauriAppPlatform() ? 'curl' : pageTurnStyle;
 
+  const einkAutoRefreshIntervalOptions = [
+    { value: '0', label: _('Off') },
+    { value: '5', label: _('Every 5 pages') },
+    { value: '10', label: _('Every 10 pages') },
+    { value: '15', label: _('Every 15 pages') },
+    { value: '20', label: _('Every 20 pages') },
+  ];
+  // A synced value outside the offered set (written by another/newer client) has
+  // no matching <option>, so the controlled select would resolve selectedIndex -1
+  // and render blank, hiding the active interval. Surface it as an extra option —
+  // shown, never rewritten — so the display still matches what noteEinkPageTurn
+  // actually reads, without coercing or destroying the stored value.
+  const currentInterval = String(einkAutoRefreshInterval);
+  const einkAutoRefreshIntervalChoices = einkAutoRefreshIntervalOptions.some(
+    (opt) => opt.value === currentInterval,
+  )
+    ? einkAutoRefreshIntervalOptions
+    : [...einkAutoRefreshIntervalOptions, { value: currentInterval, label: currentInterval }];
   const handleReset = () => {
     resetToDefaults({
       scrolled: setScrolledMode,
@@ -111,12 +187,15 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
       scrollingOverlap: setScrollingOverlap,
       hideScrollbar: setHideScrollbar,
       showPaginationButtons: setShowPaginationButtons,
+      stablePageNumbers: setStablePageNumbers,
       disableClick: setIsDisableClick,
       disableSwipe: setIsDisableSwipe,
       disablePullDownToBookmark: setDisablePullDownToBookmark,
       swapClickArea: setSwapClickArea,
       animated: setAnimated,
+      pageTurnStyle: setPageTurnStyle,
       isEink: setIsEink,
+      einkAutoRefreshInterval: setEinkAutoRefreshInterval,
       allowScript: setAllowScript,
       fullscreenClickArea: setFullscreenClickArea,
       disableDoubleClick: setIsDisableDoubleClick,
@@ -202,6 +281,12 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
   }, [showPaginationButtons]);
 
   useEffect(() => {
+    if (stablePageNumbers === (viewSettings.stablePageNumbers ?? true)) return;
+    saveViewSettings(envConfig, bookKey, 'stablePageNumbers', stablePageNumbers, false, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stablePageNumbers]);
+
+  useEffect(() => {
     saveViewSettings(envConfig, bookKey, 'disableClick', isDisableClick, false, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDisableClick]);
@@ -252,15 +337,19 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
 
   useEffect(() => {
     saveViewSettings(envConfig, bookKey, 'animated', animated, false, false);
-    if (animated) {
-      getView(bookKey)?.renderer.setAttribute('animated', '');
-    } else {
-      getView(bookKey)?.renderer.removeAttribute('animated');
-    }
     // Mesh-curl eligibility depends on `animated`.
     applyTurnAttributes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [animated]);
+
+  useEffect(() => {
+    if (animated && !isEink) {
+      getView(bookKey)?.renderer.setAttribute('animated', '');
+    } else {
+      getView(bookKey)?.renderer.removeAttribute('animated');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [animated, isEink]);
 
   useEffect(() => {
     saveViewSettings(envConfig, bookKey, 'pageTurnStyle', pageTurnStyle, false, false);
@@ -269,7 +358,13 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
   }, [pageTurnStyle]);
 
   useEffect(() => {
-    saveViewSettings(envConfig, bookKey, 'isEink', isEink);
+    const saveEink = async () => {
+      await saveViewSettings(envConfig, bookKey, 'isEink', isEink);
+      // Captured turns are off in e-ink mode. A global save reaches this book
+      // after the ones before it, so refresh once the save is done.
+      applyTurnAttributes();
+    };
+    saveEink();
     if (isEink) {
       getView(bookKey)?.renderer.setAttribute('eink', '');
     } else {
@@ -283,6 +378,25 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
     saveViewSettings(envConfig, bookKey, 'isColorEink', isColorEink);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isColorEink]);
+
+  useEffect(() => {
+    if (einkAutoRefreshInterval === viewSettings.einkAutoRefreshInterval) return;
+    saveViewSettings(
+      envConfig,
+      bookKey,
+      'einkAutoRefreshInterval',
+      einkAutoRefreshInterval,
+      false,
+      false,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [einkAutoRefreshInterval]);
+
+  useEffect(() => {
+    if (alwaysShowStatusBar === settings.alwaysShowStatusBar) return;
+    saveSysSettings(envConfig, 'alwaysShowStatusBar', alwaysShowStatusBar);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alwaysShowStatusBar]);
 
   useEffect(() => {
     if (autoScreenBrightness === settings.autoScreenBrightness) return;
@@ -402,6 +516,13 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
     ];
   };
 
+  // Set for this book only: comics and novels want different gestures (#7145).
+  const handleSelectImageViewerGesture = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const gesture = event.target.value as ImageViewerGesture;
+    setImageViewerGesture(gesture);
+    saveViewSettings(envConfig, bookKey, 'imageViewerGesture', gesture, false, false);
+  };
+
   const handleSelectAnnotationQuickAction = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const action = event.target.value as typeof annotationQuickAction;
     setAnnotationQuickAction(action);
@@ -436,16 +557,18 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
           onChange={() => setNoContinuousScroll(!noContinuousScroll)}
           data-setting-id='settings.control.scroll.noContinuousScroll'
         />
-        <NumberInput
-          label={_('Overlap Pixels')}
-          value={scrollingOverlap}
-          onChange={setScrollingOverlap}
-          disabled={!viewSettings.scrolled}
-          min={0}
-          max={200}
-          step={10}
-          data-setting-id='settings.control.overlapPixels'
-        />
+        {bookData?.isFixedLayout && (
+          <NumberInput
+            label={_('Overlap Pixels')}
+            value={scrollingOverlap}
+            onChange={setScrollingOverlap}
+            disabled={!viewSettings.scrolled}
+            min={0}
+            max={200}
+            step={10}
+            data-setting-id='settings.control.overlapPixels'
+          />
+        )}
         <SettingsSwitchRow
           label={_('Hide Scrollbar')}
           checked={hideScrollbar}
@@ -487,11 +610,34 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
           onChange={() => setIsDisableDoubleClick(!isDisableDoubleClick)}
           data-setting-id='settings.control.disableDoubleClick'
         />
+        {bookData && (
+          <SettingsRow
+            label={_('Open Images')}
+            data-setting-id='settings.control.imageViewerGesture'
+          >
+            <SettingsSelect
+              value={imageViewerGesture}
+              onChange={handleSelectImageViewerGesture}
+              ariaLabel={_('Open Images')}
+              options={[
+                { value: 'tap', label: appService?.isMobileApp ? _('Tap') : _('Click') },
+                { value: 'longPress', label: _('Long Press') },
+              ]}
+            />
+          </SettingsRow>
+        )}
         <SettingsSwitchRow
           label={_('Show Page Navigation Buttons')}
           checked={showPaginationButtons}
           onChange={() => setShowPaginationButtons(!showPaginationButtons)}
           data-setting-id='settings.control.showPaginationButtons'
+        />
+        <SettingsSwitchRow
+          label={_('Stable Page Numbers')}
+          description={_('Turn off to count pages by the screens of this device')}
+          checked={stablePageNumbers}
+          onChange={() => setStablePageNumbers(!stablePageNumbers)}
+          data-setting-id='settings.control.stablePageNumbers'
         />
       </BoxedList>
 
@@ -559,20 +705,21 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
       <BoxedList title={_('Animation')} data-setting-id='settings.control.pagingAnimation'>
         <SettingsSwitchRow
           label={_('Paging Animation')}
-          checked={animated}
+          checked={animated && !isEink}
           onChange={() => setAnimated(!animated)}
+          disabled={isEink}
         />
         <SettingsRow label={_('Animation Style')} data-setting-id='settings.control.pageTurnStyle'>
           <SettingsSelect
             // A synced slide/curl setting from another device still reads as
             // push here when this engine cannot animate it.
             value={
-              turnStyleOptions.some((opt) => opt.value === pageTurnStyle) ? pageTurnStyle : 'push'
+              turnStyleOptions.some((opt) => opt.value === shownTurnStyle) ? shownTurnStyle : 'push'
             }
             onChange={(e) => setPageTurnStyle(e.target.value as PageTurnStyle)}
             ariaLabel={_('Animation Style')}
             options={turnStyleOptions}
-            disabled={!animated}
+            disabled={!animated || isEink}
           />
         </SettingsRow>
       </BoxedList>
@@ -584,6 +731,21 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
           onChange={() => setIsEink(!isEink)}
           data-setting-id='settings.control.einkMode'
         />
+        {appService?.isAndroidApp && einkRefreshSupported && (
+          <SettingsRow
+            label={_('Auto Full Refresh')}
+            disabled={!isEink}
+            data-setting-id='settings.control.autoFullRefresh'
+          >
+            <SettingsSelect
+              value={String(einkAutoRefreshInterval)}
+              onChange={(e) => setEinkAutoRefreshInterval(Number(e.target.value))}
+              ariaLabel={_('Auto Full Refresh')}
+              disabled={!isEink}
+              options={einkAutoRefreshIntervalChoices}
+            />
+          </SettingsRow>
+        )}
         <SettingsSwitchRow
           label={_('Color E-Ink Mode')}
           checked={isColorEink}
@@ -600,6 +762,14 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
           onChange={() => setHideBookshelfPageButtons(!hideBookshelfPageButtons)}
           data-setting-id='settings.control.hideBookshelfPageButtons'
         />
+        {appService?.isMobileApp && (
+          <SettingsSwitchRow
+            label={_('Always Show Status Bar')}
+            checked={alwaysShowStatusBar}
+            onChange={() => setAlwaysShowStatusBar(!alwaysShowStatusBar)}
+            data-setting-id='settings.control.alwaysShowStatusBar'
+          />
+        )}
         {appService?.isMobileApp && (
           <SettingsSwitchRow
             label={_('System Screen Brightness')}
@@ -647,6 +817,26 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
           data-setting-id='settings.control.gamepadEnabled'
         />
       </BoxedList>
+
+      {appService?.isWindowsApp && (
+        <div>
+          <BoxedList title={_('File Explorer')}>
+            <SettingsSwitchRow
+              label={_('Use Readest for File Explorer thumbnails')}
+              description={_('Existing thumbnail providers are preserved')}
+              checked={explorerThumbnails}
+              disabled={explorerThumbnailsBusy}
+              onChange={toggleExplorerThumbnails}
+              data-setting-id='settings.control.explorerThumbnails'
+            />
+          </BoxedList>
+          {explorerThumbnailsError && (
+            <p role='alert' className='text-error mt-2 ps-4 text-sm'>
+              {_('Could not update File Explorer thumbnails')}
+            </p>
+          )}
+        </div>
+      )}
 
       {appService?.hasUpdater && (
         <BoxedList title={_('Update')} data-setting-id='settings.control.checkUpdates'>

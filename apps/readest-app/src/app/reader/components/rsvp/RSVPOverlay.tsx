@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo } from 'react';
 import clsx from 'clsx';
 import { Insets } from '@/types/misc';
 import { RsvpState, RSVPController } from '@/services/rsvp';
-import { containsCJK, isRTLText } from '@/services/rsvp/utils';
+import { containsCJK, isRTLText, splitAtFocus } from '@/services/rsvp/utils';
 import { useThemeStore } from '@/store/themeStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { TOCItem } from '@/libs/document';
@@ -30,6 +30,8 @@ import { getPopupPosition, Position } from '@/utils/sel';
 import { Overlay } from '@/components/Overlay';
 import DictionarySheet from '@/app/reader/components/annotator/DictionarySheet';
 import DictionaryPopup from '@/app/reader/components/annotator/DictionaryPopup';
+import type { VocabularyCapture } from '@/app/reader/components/annotator/DictionaryResultsView';
+import { sentenceAt } from '@/services/vocabulary/sentence';
 import TTSFollowIndicator, { TtsSyncStatus } from '@/app/reader/components/tts/TTSFollowIndicator';
 import { Toggle } from '@/components/primitives/toggle';
 
@@ -162,6 +164,15 @@ const WpmEntry: React.FC<WpmEntryProps> = ({ controller, wpm, bgColor }) => {
   );
 };
 
+// The sentence a looked-up word sits in; the bare word if the range can't be read.
+const sentenceAround = (range: Range, word: string): string => {
+  try {
+    return sentenceAt(range) || word;
+  } catch {
+    return word;
+  }
+};
+
 interface RSVPOverlayProps {
   gridInsets: Insets;
   controller: RSVPController;
@@ -198,6 +209,8 @@ interface RSVPOverlayProps {
   onRequestNextPage: () => void;
   /** Opens the dictionary management settings from the lookup header gear. */
   onManageDictionary?: () => void;
+  /** The book lookups are saved under in the vocabulary builder (#789). */
+  vocabularyBook?: { lang: string; hash?: string; title?: string; author?: string };
 }
 
 const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
@@ -207,6 +220,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   currentChapterHref,
   fontFamily,
   lang,
+  vocabularyBook,
   ttsSyncStatus = 'idle',
   estimated = false,
   ttsActive = false,
@@ -294,6 +308,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
     word: string;
     position: Position;
     trianglePosition: Position;
+    capture?: VocabularyCapture;
   } | null>(null);
   const touchStartX = useRef(0);
   const touchStartY = useRef(0);
@@ -420,16 +435,30 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   const effectiveChapterHref = currentChapterHref;
 
   // Word display helpers
-  const wordBefore = currentWord ? currentWord.text.substring(0, currentWord.orpIndex) : '';
-  const orpChar = currentWord ? currentWord.text.charAt(currentWord.orpIndex) : '';
-  const wordAfter = currentWord ? currentWord.text.substring(currentWord.orpIndex + 1) : '';
+  const {
+    before: wordBefore,
+    focus: orpChar,
+    after: wordAfter,
+  } = currentWord
+    ? splitAtFocus(currentWord.text, currentWord.orpIndex)
+    : { before: '', focus: '', after: '' };
   const isCJKWord = currentWord ? containsCJK(currentWord.text) : false;
   // RTL words (Arabic, Hebrew, …) must never be split into before/orp/after
   // spans: slicing by character index breaks letter shaping and reverses the
   // visual order. Render them whole instead, like CJK Highlight Word (#4630).
   const isRTLWord = currentWord ? isRTLText(currentWord.text) : false;
+  const isWholeWord = isRTLWord || (isCJKWord && highlightWholeWord);
   const wordLetterSpacing = undefined;
-  const wordSideOffset = isCJKWord ? '0.45em' : '0.3em';
+  // The before/after text sits half a focus letter away from the center. A
+  // focus cluster of several code points (Bengali কি, ন্তু) is wider than one
+  // letter, so measure it instead of overlapping the text after it (#7024).
+  const orpRef = useRef<HTMLSpanElement>(null);
+  const [clusterSideOffset, setClusterSideOffset] = useState<string | null>(null);
+  useLayoutEffect(() => {
+    const width = orpChar.length > 1 ? orpRef.current?.offsetWidth : undefined;
+    setClusterSideOffset(width ? `${width / 2}px` : null);
+  }, [orpChar, isWholeWord, fontSizeIndex, fontFamily]);
+  const wordSideOffset = clusterSideOffset ?? (isCJKWord ? '0.45em' : '0.3em');
 
   // Time remaining calculation
   const getTimeRemaining = useCallback((): string | null => {
@@ -659,9 +688,19 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
       DICT_POPUP_PADDING,
     );
 
-    setDict({ word: lookup.text, position, trianglePosition });
+    const capture: VocabularyCapture | undefined = vocabularyBook && {
+      lang: vocabularyBook.lang,
+      occurrence: {
+        sentence: sentenceAround(lookup.range, lookup.text),
+        bookHash: vocabularyBook.hash,
+        bookTitle: vocabularyBook.title,
+        bookAuthor: vocabularyBook.author,
+        at: Date.now(),
+      },
+    };
+    setDict({ word: lookup.text, position, trianglePosition, capture });
     setLookup(null);
-  }, [lookup, state.playing, controller]);
+  }, [lookup, state.playing, controller, vocabularyBook]);
 
   const closeLookup = useCallback(() => {
     setDict(null);
@@ -1057,7 +1096,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
                 }}
               >
                 {currentWord ? (
-                  isRTLWord || (isCJKWord && highlightWholeWord) ? (
+                  isWholeWord ? (
                     // Whole-word mode: center the full word and color it, instead
                     // of anchoring a single focus character. Used for CJK Highlight
                     // Word and always for RTL words, whose shaping/order would
@@ -1079,6 +1118,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
                         {wordBefore}
                       </span>
                       <span
+                        ref={orpRef}
                         className='rsvp-word-orp relative z-10 font-bold'
                         style={{ color: effectiveOrpColor }}
                       >
@@ -1422,6 +1462,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
           <DictionarySheet
             word={dict.word}
             lang={lang}
+            capture={dict.capture}
             onDismiss={closeLookup}
             onManage={onManageDictionary}
           />
@@ -1433,6 +1474,7 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
             <DictionaryPopup
               word={dict.word}
               lang={lang}
+              capture={dict.capture}
               position={dict.position}
               trianglePosition={dict.trianglePosition}
               popupWidth={Math.min(

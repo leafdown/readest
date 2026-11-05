@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { Book, BooksGroup } from '@/types/book';
 import type { ShelfSection } from '@/app/library/components/BookshelfStream';
 import type { BookshelfDefinition } from '@/types/bookshelf';
@@ -19,6 +19,7 @@ import { applyBookshelfDraft } from '@/services/bookshelves/state';
 import { createBookGroups } from '@/app/library/utils/libraryUtils';
 import { LibraryGroupByType } from '@/types/settings';
 import Bookshelf from '@/app/library/components/Bookshelf';
+import { eventDispatcher } from '@/utils/event';
 const mocks = vi.hoisted(() => ({
   params: new URLSearchParams(),
   env: {},
@@ -29,13 +30,19 @@ const mocks = vi.hoisted(() => ({
   router: { push: vi.fn(), replace: vi.fn() },
   initialize: () => {},
   instance: () => undefined,
+  appService: null as object | null,
 }));
 vi.mock('next/navigation', () => ({
   useRouter: () => mocks.router,
   useSearchParams: () => mocks.params,
 }));
 vi.mock('@/context/EnvContext', () => ({
-  useEnv: () => ({ envConfig: mocks.env, appService: null }),
+  useEnv: () => ({ envConfig: mocks.env, appService: mocks.appService }),
+}));
+vi.mock('@/app/library/components/LibrarySearchResults', () => ({
+  default: ({ books }: { books: Book[] }) => (
+    <div data-testid='content-search-results' data-books={books.map((b) => b.hash).join(',')} />
+  ),
 }));
 vi.mock('@/context/AuthContext', () => ({ useAuth: () => ({ user: null }) }));
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => mocks.translate }));
@@ -62,16 +69,20 @@ vi.mock('@/app/library/components/BookshelfItem', () => ({
     itemSelected,
     coverFit,
     skeuomorphicCovers,
+    showPageCount,
     isSelectMode,
     handleLibraryNavigation,
+    showSeriesIndex,
   }: {
     item: Book | BooksGroup;
     toggleSelection: (id: string) => void;
     itemSelected: boolean;
     coverFit: string;
     skeuomorphicCovers: boolean;
+    showPageCount?: boolean;
     isSelectMode: boolean;
     handleLibraryNavigation: (group: string) => void;
+    showSeriesIndex?: boolean;
   }) => {
     // Keep the mode-entry callback here to verify selection reads the live
     // store even when a child retains an older callback. The real card also
@@ -88,6 +99,8 @@ vi.mock('@/app/library/components/BookshelfItem', () => ({
       <button
         data-cover-fit={coverFit}
         data-skeuomorphic-covers={skeuomorphicCovers}
+        data-show-page-count={showPageCount}
+        data-show-series-index={showSeriesIndex}
         aria-pressed={itemSelected}
         onClick={onClick}
       >
@@ -150,6 +163,7 @@ const props = {
   handleBookUpload: async () => true,
   handleBookDelete: async () => true,
   handleBookPurge: async () => true,
+  handleBookDeleteLocalCopy: async () => true,
   handleSetSelectMode: noop,
   handleShowDetailsBook: noop,
   handleLibraryNavigation: noop,
@@ -177,6 +191,7 @@ const configure = (draft: BookshelfDefinition[]) => {
 };
 beforeEach(() => {
   mocks.params = new URLSearchParams();
+  mocks.appService = null;
   mocks.router.replace.mockClear();
   window.history.replaceState(null, '', '/library');
   useSettingsStore.setState({
@@ -193,6 +208,22 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe('library bookshelf integration', () => {
+  it('shows the empty library state over a lingering content search', () => {
+    mocks.appService = {};
+    useLibraryStore.setState({ library: [] });
+    render(
+      <Bookshelf
+        {...props}
+        libraryBooks={[]}
+        contentSearch={{
+          query: 'whale',
+          config: { scope: 'book', mode: 'contains', matchCase: false, matchDiacritics: false },
+        }}
+      />,
+    );
+    expect(screen.getByRole('heading', { name: 'Start your library' })).toBeTruthy();
+    expect(screen.queryByTestId('content-search-results')).toBeNull();
+  });
   it('hides enabled shelves without matching books from the library', () => {
     const emptyShelf = bookshelfSchema.parse({
       ...createBookshelf('Empty shelf'),
@@ -392,6 +423,15 @@ describe('library bookshelf integration', () => {
         ?.getAttribute('data-skeuomorphic-covers'),
     ).toBe('false');
   });
+  it('shows page counts only on the shelf that turns them on (#6909)', () => {
+    const custom = { ...createBookshelf('With page counts'), showPageCount: true };
+    configure([custom, ...defaultBookshelves(DEFAULT_SYSTEM_SETTINGS)]);
+    render(<Bookshelf {...props} />);
+    const showPageCount = (shelfId: string) =>
+      screen.getByTestId(shelfId).querySelector('button')?.getAttribute('data-show-page-count');
+    expect(showPageCount(custom.id)).toBe('true');
+    expect(showPageCount('default')).toBeNull();
+  });
   it('updates inheriting shelves from global sorting while Default can sort independently', () => {
     const custom = createBookshelf('Following global sorting');
     configure([
@@ -420,6 +460,28 @@ describe('library bookshelf integration', () => {
     for (const id of [custom.id, 'recent'])
       expect(screen.getByTestId(id).querySelector('button')?.textContent).toBe('Book 0');
     expect(screen.getByTestId('default').querySelector('button')?.textContent).toBe('Book 19');
+  });
+  it.each(['', 'q=story'])('ignores articles in library and search title sorting (%s)', (query) => {
+    const articleBooks = ['The Gatsby Story', 'Dune Story', 'A Tale Story'].map((title, index) => ({
+      ...books[index]!,
+      title,
+    }));
+    mocks.params = new URLSearchParams(query);
+    useSettingsStore.setState({
+      settings: {
+        ...DEFAULT_SYSTEM_SETTINGS,
+        libraryGroupBy: 'none',
+        librarySortBy: 'title',
+        librarySortByAuto: false,
+        librarySortAscending: true,
+      },
+    });
+    render(<Bookshelf {...props} libraryBooks={articleBooks} />);
+    const displayedTitles = () =>
+      Array.from(screen.getByTestId('default').querySelectorAll('button')).map(
+        (b) => b.textContent,
+      );
+    expect(displayedTitles()).toEqual(['Dune Story', 'The Gatsby Story', 'A Tale Story']);
   });
   it('uses the global view for non-carousel shelves and keeps all carousel results', () => {
     const carousel = { ...createBookshelf('Carousel'), limit: 4 };
@@ -469,6 +531,48 @@ describe('library bookshelf integration', () => {
         .getAllByRole('button', { name: 'Book 19' })
         .every((b) => b.getAttribute('aria-pressed') === 'true'),
     ).toBe(true);
+  });
+  it('deletes the books after an earlier delete confirmation was cancelled', async () => {
+    const handleBookDelete = vi.fn(async () => true);
+    render(<Bookshelf {...props} handleBookDelete={handleBookDelete} />);
+    const openDelete = async () => {
+      await act(() => eventDispatcher.dispatch('delete-books', { ids: ['1', '2'] }));
+      return within(document.querySelector('.delete-alert') as HTMLElement);
+    };
+    fireEvent.click((await openDelete()).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(document.querySelector('.delete-alert')).toBeNull());
+    fireEvent.click((await openDelete()).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(document.querySelector('.delete-alert')).toBeNull());
+    expect(handleBookDelete).toHaveBeenCalledTimes(2);
+  });
+  it('stops a cancelled deletion even when another one starts before its batch ends', async () => {
+    const many = Array.from({ length: 41 }, (_, i) => ({
+      ...books[0]!,
+      hash: `m${i}`,
+      title: `M ${i}`,
+    }));
+    useLibraryStore.setState({ library: many });
+    const pending: (() => void)[] = [];
+    const handleBookDelete = vi.fn(
+      () => new Promise<boolean>((resolve) => pending.push(() => resolve(true))),
+    );
+    render(<Bookshelf {...props} libraryBooks={many} handleBookDelete={handleBookDelete} />);
+    const confirmDelete = async (ids: string[]) => {
+      await act(() => eventDispatcher.dispatch('delete-books', { ids }));
+      const alert = within(document.querySelector('.delete-alert') as HTMLElement);
+      fireEvent.click(alert.getByRole('button', { name: 'Delete' }));
+      return alert;
+    };
+    // Two batches of 20; cancel while the first is still running.
+    const first = await confirmDelete(many.slice(0, 40).map((b) => b.hash));
+    await waitFor(() => expect(handleBookDelete).toHaveBeenCalledTimes(20));
+    fireEvent.click(first.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(document.querySelector('.delete-alert')).toBeNull());
+    await confirmDelete(['m40']);
+    await waitFor(() => expect(handleBookDelete).toHaveBeenCalledTimes(21));
+    await act(async () => pending.splice(0).forEach((resolve) => resolve()));
+    await act(async () => pending.splice(0).forEach((resolve) => resolve()));
+    expect(handleBookDelete).toHaveBeenCalledTimes(21);
   });
   it('includes every group member in selection and toggles overlapping cards together', async () => {
     const grouped = books.map((b) => ({ ...b, groupName: 'Fiction/Stories' }));
@@ -529,6 +633,69 @@ describe('library bookshelf integration', () => {
     rerender(<Bookshelf {...props} isSelectAll={false} isSelectNone />);
     rerender(<Bookshelf {...props} isSelectAll />);
     await waitFor(() => expect(useLibraryStore.getState().selectedBooks.size).toBe(20));
+  });
+  it('badges series indexes only on books inside an opened series group (#6347)', () => {
+    const seriesBooks = books.map((book, index) => ({
+      ...book,
+      metadata: {
+        title: book.title,
+        author: 'Writer',
+        language: 'en',
+        series: 'Saga',
+        seriesIndex: index + 1,
+      },
+    }));
+    useLibraryStore.setState({ library: seriesBooks });
+    useSettingsStore.setState({
+      settings: { ...useSettingsStore.getState().settings, libraryGroupBy: 'series' },
+    });
+    const group = createBookGroups(seriesBooks, LibraryGroupByType.Series).find(
+      (item): item is BooksGroup => 'books' in item,
+    )!;
+    const flags = () =>
+      Array.from(screen.getByTestId('default').querySelectorAll('button')).map(
+        (b) => b.dataset['showSeriesIndex'],
+      );
+    const { rerender } = render(
+      <Bookshelf {...props} isSelectMode={false} libraryBooks={seriesBooks} />,
+    );
+    expect(flags()).toEqual(['false']);
+    mocks.params = new URLSearchParams({ group: group.id, shelf: 'default' });
+    rerender(<Bookshelf {...props} isSelectMode={false} libraryBooks={seriesBooks} />);
+    expect(flags()).toHaveLength(20);
+    expect(flags().every((flag) => flag === 'true')).toBe(true);
+    // An author group names the author, not the series, so its covers stay plain.
+    const author = createBookGroups(seriesBooks, LibraryGroupByType.Author).find(
+      (item): item is BooksGroup => 'books' in item,
+    )!;
+    mocks.params = new URLSearchParams({ groupBy: 'author', group: author.id, shelf: 'default' });
+    rerender(<Bookshelf {...props} isSelectMode={false} libraryBooks={seriesBooks} />);
+    expect(flags().every((flag) => flag === 'false')).toBe(true);
+  });
+  it('searches book contents only within the opened group', () => {
+    mocks.appService = {};
+    const grouped = books.map((book, index) => ({
+      ...book,
+      groupName: index < 3 ? 'Philosophy' : index < 5 ? 'Philosophy/Ethics' : 'Fiction',
+    }));
+    useSettingsStore.setState({
+      settings: { ...useSettingsStore.getState().settings, libraryGroupBy: 'group' },
+    });
+    useLibraryStore.setState({ library: grouped, groups: { philosophy: 'Philosophy' } });
+    mocks.params = new URLSearchParams('q=Book&search=text&group=philosophy&shelf=default');
+    render(
+      <Bookshelf
+        {...props}
+        isSelectMode={false}
+        libraryBooks={grouped}
+        contentSearch={{
+          query: 'Book',
+          config: { scope: 'book', mode: 'contains', matchCase: false, matchDiacritics: false },
+        }}
+      />,
+    );
+    const searched = screen.getByTestId('content-search-results').dataset['books']!.split(',');
+    expect(searched.sort()).toEqual(['0', '1', '2', '3', '4']);
   });
   it('keeps an opened group while a search matches nothing', () => {
     window.history.replaceState(null, '', '/library?q=nope&group=g&shelf=default');

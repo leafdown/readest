@@ -185,6 +185,12 @@ msgstr "དེབ་འདི་སྤྲིན་གྲུབ་དང་སྒ
 msgid "Remove"
 msgstr "སུབ་པ་"
 
+msgid "Remove from Library, Keep File"
+msgstr "དཔེ་མཛོད་ནས་སུབ་ནས་ཡིག་ཆ་ཉར་ཚགས།"
+
+msgid "Remove this book from your library and the cloud? The file stays on this device."
+msgstr "དཔེ་དེབ་འདི་ཁྱེད་ཀྱི་དཔེ་མཛོད་དང་སྤྲིན་ནས་སུབ་དགོས་སམ། ཡིག་ཆ་སྒྲིག་ཆས་འདིར་ལུས་ངེས།"
+
 msgid "Remove from Cloud Only"
 msgstr "སྤྲིན་གྲུབ་ནས་ཁོ་ནར་སུབ་པ་"
 
@@ -287,14 +293,14 @@ msgstr "དཔེ་ཆ་ཁ་ཕྱེ་མེད།"
 msgid "Uploaded to Readest:"
 msgstr "Readest ལ་སྦར་ཟིན་:"
 
+msgid "Auto sync"
+msgstr "རང་འགུལ་མཉམ་སྦྱོར་"
+
 msgid "Log in Readest Account"
 msgstr "Readest རྩིས་ཐོར་འཛུལ་ཞུགས།"
 
 msgid "Log out as %1"
 msgstr "%1 ནས་ཕྱིར་ཐོན།"
-
-msgid "Auto sync"
-msgstr "རང་འགུལ་མཉམ་སྦྱོར་"
 
 msgid "Readest library"
 msgstr "Readest དཔེ་མཛོད་"
@@ -337,9 +343,6 @@ msgstr "གསར་སྤེལ་ཞིབ་བཤེར"
 
 msgid "Please login first"
 msgstr "དང་པོ་འཛུལ་ཞུགས་གནང་རོགས།"
-
-msgid "Please configure Readest settings first"
-msgstr "དང་པོ་ Readest སྒྲིག་འགོད་གནང་རོགས།"
 
 msgid "(none)"
 msgstr "(མེད)"
@@ -506,9 +509,6 @@ msgstr "ཆ་ཚང་མཉམ་འགྱུར: མཆན་འགྲེལ�
 msgid "Pulling annotations..."
 msgstr "མཆན་འགྲེལ་ལེན་བཞིན་པ…"
 
-msgid "Authentication failed, please login again"
-msgstr "ཡིད་ཆེས་ཞིབ་བཤེར་མ་ཐུབ། ཡང་བསྐྱར་འཛུལ་ཞུགས་གནང་རོགས།"
-
 msgid "Failed to pull annotations"
 msgstr "མཆན་འགྲེལ་ལེན་མ་ཐུབ།"
 
@@ -521,11 +521,17 @@ msgstr "མཆན་འགྲེལ་ %1 ལེན་སོང་།"
 msgid "Your Readest session has expired. Please log in again."
 msgstr "ཁྱེད་ཀྱི་ Readest འཛུལ་ཞུགས་ཀྱི་དུས་ཚོད་རྫོགས་སོང་། ཡང་བསྐྱར་འཛུལ་ཞུགས་གནང་རོགས།"
 
+msgid "Authentication failed, please login again"
+msgstr "ཡིད་ཆེས་ཞིབ་བཤེར་མ་ཐུབ། ཡང་བསྐྱར་འཛུལ་ཞུགས་གནང་རོགས།"
+
 msgid "Login"
 msgstr "འཛུལ་ཞུགས།"
 
 msgid "Please enter both email and password"
 msgstr "ཡིག་འཕྲིན་དང་གསང་ཨང་གཉིས་ཀ་འབྲི་རོགས།"
+
+msgid "Sign in with a code"
+msgstr "ཨང་རྟགས་ཀྱིས་ནང་འཛུལ།"
 
 msgid "Please configure Supabase URL and API key first"
 msgstr "དང་པོ་ Supabase URL དང་ API ལྡེ་མིག་སྒྲིག་འགོད་གནང་རོགས།"
@@ -533,11 +539,17 @@ msgstr "དང་པོ་ Supabase URL དང་ API ལྡེ་མིག་�
 msgid "Logging in..."
 msgstr "འཛུལ་ཞུགས་བཞིན་པ…"
 
+msgid "Login failed: %1"
+msgstr "འཛུལ་ཞུགས་མ་ཐུབ: %1"
+
 msgid "Successfully logged in to Readest"
 msgstr "Readest ལ་ལེགས་པར་འཛུལ་ཞུགས་སོང་།"
 
-msgid "Login failed: %1"
-msgstr "འཛུལ་ཞུགས་མ་ཐུབ: %1"
+msgid "Scan the QR code with a phone signed in to Readest, or open %1 and enter this code:\n\n%2"
+msgstr "Readest ལ་ནང་འཛུལ་བྱས་པའི་ཁ་པར་གྱིས་ QR ཨང་རྟགས་བཤེར་རོགས། ཡང་ན་ %1 ཁ་ཕྱེ་ནས་ཨང་རྟགས་འདི་འཇུག་རོགས།\n\n%2"
+
+msgid "The code expired. Please try again."
+msgstr "ཨང་རྟགས་དུས་ཚོད་རྫོགས་སོང་། ཡང་བསྐྱར་ཚོད་ལྟ་བྱེད་རོགས།"
 
 msgid "Logged out from Readest"
 msgstr "Readest ནས་ཕྱིར་ཐོན་སོང་།"
@@ -566,8 +578,65 @@ msgstr "ཀློག་པའི་འཕེལ་རིམ་ལེན་མ་
 msgid "Reading progress synchronized"
 msgstr "ཀློག་པའི་འཕེལ་རིམ་མཉམ་འགྱུར་སོང་།"
 
+msgid "Saved reading position cannot be used with this copy of the book"
+msgstr "ཉར་ཚགས་བྱས་པའི་ཀློག་ས་དེ་དཔེ་དེབ་འདིའི་འདྲ་བཤུས་ལ་བེད་སྤྱོད་བྱེད་མི་ཐུབ།"
+
 msgid "No saved reading progress found for this book"
 msgstr "དཔེ་ཆ་འདིའི་ཀློག་པའི་འཕེལ་རིམ་ཉར་ཚགས་མ་རྙེད།"
+
+msgid "Sync was cancelled."
+msgstr "མཉམ་སྡེབ་མཚམས་བཅད་ཟིན།"
+
+msgid "The connection timed out. Please try again."
+msgstr "འབྲེལ་མཐུད་ཀྱི་དུས་ཚོད་ཡོལ་སོང་། ཡང་བསྐྱར་ཚོད་ལྟ་བྱོས།"
+
+msgid "The network is unreachable. Please check the internet connection."
+msgstr "དྲ་བར་འབྲེལ་མཐུད་བྱེད་མི་ཐུབ། དྲ་རྒྱའི་འབྲེལ་མཐུད་ལ་ཞིབ་བཤེར་བྱོས།"
+
+msgid "The server could not be found. Please check the internet connection."
+msgstr "ཞབས་ཞུ་ཆས་རྙེད་མ་བྱུང་། དྲ་རྒྱའི་འབྲེལ་མཐུད་ལ་ཞིབ་བཤེར་བྱོས།"
+
+msgid "The server refused the connection. Please try again later."
+msgstr "ཞབས་ཞུ་ཆས་ཀྱིས་འབྲེལ་མཐུད་ཁས་མ་བླངས། རྗེས་སུ་ཡང་བསྐྱར་ཚོད་ལྟ་བྱོས།"
+
+msgid "The connection was interrupted. Please try again."
+msgstr "འབྲེལ་མཐུད་བར་ཆད་བྱུང་། ཡང་བསྐྱར་ཚོད་ལྟ་བྱོས།"
+
+msgid "A secure connection to the server could not be established."
+msgstr "ཞབས་ཞུ་ཆས་དང་བདེ་འཇགས་ཀྱི་འབྲེལ་མཐུད་འཛུགས་མ་ཐུབ།"
+
+msgid "Authentication failed. Please log in again."
+msgstr "ར་སྤྲོད་མ་ཐུབ། ཡང་བསྐྱར་ནང་འཛུལ་བྱོས།"
+
+msgid "The account changed during sync."
+msgstr "མཉམ་སྡེབ་བྱེད་སྐབས་རྩིས་ཐོ་བསྒྱུར་སོང་།"
+
+msgid "The file was not found in the cloud."
+msgstr "སྤྲིན་ཁར་ཡིག་ཆ་རྙེད་མ་བྱུང་།"
+
+msgid "The local file is missing."
+msgstr "ས་གནས་ཀྱི་ཡིག་ཆ་མི་འདུག"
+
+msgid "An internal error occurred. Please try again."
+msgstr "ནང་ཁུལ་གྱི་ནོར་འཁྲུལ་བྱུང་། ཡང་བསྐྱར་ཚོད་ལྟ་བྱོས།"
+
+msgid "Access denied."
+msgstr "འཛུལ་ཆོག་མ་བྱུང་།"
+
+msgid "Not found on the server."
+msgstr "ཞབས་ཞུ་ཆས་སྟེང་རྙེད་མ་བྱུང་།"
+
+msgid "The file is too large."
+msgstr "ཡིག་ཆ་ཆེ་དྲགས་འདུག"
+
+msgid "Too many requests. Please try again later."
+msgstr "རེ་ཞུ་མང་དྲགས་འདུག རྗེས་སུ་ཡང་བསྐྱར་ཚོད་ལྟ་བྱོས།"
+
+msgid "The server is temporarily unavailable. Please try again later."
+msgstr "ཞབས་ཞུ་ཆས་གནས་སྐབས་རིང་བེད་སྤྱོད་བྱེད་མི་ཐུབ། རྗེས་སུ་ཡང་བསྐྱར་ཚོད་ལྟ་བྱོས།"
+
+msgid "The request failed. Please try again."
+msgstr "རེ་ཞུ་མ་འགྲུབ། ཡང་བསྐྱར་ཚོད་ལྟ་བྱོས།"
 
 msgid "Reading statistics are up to date"
 msgstr "ཀློག་པའི་གྲངས་ཐོ་གསར་ཤོས་ཡིན།"

@@ -185,6 +185,12 @@ msgstr "이 책을 클라우드와 기기에서 제거하시겠습니까?"
 msgid "Remove"
 msgstr "제거"
 
+msgid "Remove from Library, Keep File"
+msgstr "라이브러리에서 제거, 파일 유지"
+
+msgid "Remove this book from your library and the cloud? The file stays on this device."
+msgstr "이 책을 라이브러리와 클라우드에서 제거할까요? 파일은 이 기기에 남습니다."
+
 msgid "Remove from Cloud Only"
 msgstr "클라우드에서만 제거"
 
@@ -287,14 +293,14 @@ msgstr "열린 책이 없습니다"
 msgid "Uploaded to Readest:"
 msgstr "Readest에 업로드됨:"
 
+msgid "Auto sync"
+msgstr "자동 동기화"
+
 msgid "Log in Readest Account"
 msgstr "Readest 계정에 로그인"
 
 msgid "Log out as %1"
 msgstr "%1 로그아웃"
-
-msgid "Auto sync"
-msgstr "자동 동기화"
 
 msgid "Readest library"
 msgstr "Readest 라이브러리"
@@ -337,9 +343,6 @@ msgstr "업데이트 확인"
 
 msgid "Please login first"
 msgstr "먼저 로그인하세요"
-
-msgid "Please configure Readest settings first"
-msgstr "먼저 Readest 설정을 구성하세요"
 
 msgid "(none)"
 msgstr "(없음)"
@@ -506,9 +509,6 @@ msgstr "전체 동기화: 모든 주석을 가져오는 중…"
 msgid "Pulling annotations..."
 msgstr "주석을 가져오는 중…"
 
-msgid "Authentication failed, please login again"
-msgstr "인증에 실패했습니다. 다시 로그인하세요"
-
 msgid "Failed to pull annotations"
 msgstr "주석 가져오기에 실패했습니다"
 
@@ -521,11 +521,17 @@ msgstr "%1개 주석을 가져왔습니다"
 msgid "Your Readest session has expired. Please log in again."
 msgstr "Readest 세션이 만료되었습니다. 다시 로그인하세요."
 
+msgid "Authentication failed, please login again"
+msgstr "인증에 실패했습니다. 다시 로그인하세요"
+
 msgid "Login"
 msgstr "로그인"
 
 msgid "Please enter both email and password"
 msgstr "이메일과 비밀번호를 모두 입력하세요"
+
+msgid "Sign in with a code"
+msgstr "코드로 로그인"
 
 msgid "Please configure Supabase URL and API key first"
 msgstr "먼저 Supabase URL과 API 키를 설정하세요"
@@ -533,11 +539,17 @@ msgstr "먼저 Supabase URL과 API 키를 설정하세요"
 msgid "Logging in..."
 msgstr "로그인 중…"
 
+msgid "Login failed: %1"
+msgstr "로그인 실패: %1"
+
 msgid "Successfully logged in to Readest"
 msgstr "Readest에 로그인되었습니다"
 
-msgid "Login failed: %1"
-msgstr "로그인 실패: %1"
+msgid "Scan the QR code with a phone signed in to Readest, or open %1 and enter this code:\n\n%2"
+msgstr "Readest에 로그인된 휴대폰으로 QR 코드를 스캔하거나, %1을(를) 열고 다음 코드를 입력하세요:\n\n%2"
+
+msgid "The code expired. Please try again."
+msgstr "코드가 만료되었습니다. 다시 시도해 주세요."
 
 msgid "Logged out from Readest"
 msgstr "Readest에서 로그아웃되었습니다"
@@ -566,8 +578,65 @@ msgstr "읽기 진행 상황 가져오기에 실패했습니다"
 msgid "Reading progress synchronized"
 msgstr "읽기 진행 상황이 동기화되었습니다"
 
+msgid "Saved reading position cannot be used with this copy of the book"
+msgstr "저장된 읽기 위치를 이 책 사본에서 사용할 수 없습니다"
+
 msgid "No saved reading progress found for this book"
 msgstr "이 책의 저장된 읽기 진행 상황을 찾을 수 없습니다"
+
+msgid "Sync was cancelled."
+msgstr "동기화가 취소되었습니다."
+
+msgid "The connection timed out. Please try again."
+msgstr "연결 시간이 초과되었습니다. 다시 시도하세요."
+
+msgid "The network is unreachable. Please check the internet connection."
+msgstr "네트워크에 연결할 수 없습니다. 인터넷 연결을 확인하세요."
+
+msgid "The server could not be found. Please check the internet connection."
+msgstr "서버를 찾을 수 없습니다. 인터넷 연결을 확인하세요."
+
+msgid "The server refused the connection. Please try again later."
+msgstr "서버가 연결을 거부했습니다. 나중에 다시 시도하세요."
+
+msgid "The connection was interrupted. Please try again."
+msgstr "연결이 끊어졌습니다. 다시 시도하세요."
+
+msgid "A secure connection to the server could not be established."
+msgstr "서버와 보안 연결을 설정할 수 없습니다."
+
+msgid "Authentication failed. Please log in again."
+msgstr "인증에 실패했습니다. 다시 로그인하세요."
+
+msgid "The account changed during sync."
+msgstr "동기화 중에 계정이 변경되었습니다."
+
+msgid "The file was not found in the cloud."
+msgstr "클라우드에서 파일을 찾을 수 없습니다."
+
+msgid "The local file is missing."
+msgstr "로컬 파일이 없습니다."
+
+msgid "An internal error occurred. Please try again."
+msgstr "내부 오류가 발생했습니다. 다시 시도하세요."
+
+msgid "Access denied."
+msgstr "접근이 거부되었습니다."
+
+msgid "Not found on the server."
+msgstr "서버에서 찾을 수 없습니다."
+
+msgid "The file is too large."
+msgstr "파일이 너무 큽니다."
+
+msgid "Too many requests. Please try again later."
+msgstr "요청이 너무 많습니다. 나중에 다시 시도하세요."
+
+msgid "The server is temporarily unavailable. Please try again later."
+msgstr "서버를 일시적으로 사용할 수 없습니다. 나중에 다시 시도하세요."
+
+msgid "The request failed. Please try again."
+msgstr "요청에 실패했습니다. 다시 시도하세요."
 
 msgid "Reading statistics are up to date"
 msgstr "읽기 통계가 최신 상태입니다"

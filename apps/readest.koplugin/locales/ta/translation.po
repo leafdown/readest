@@ -185,6 +185,12 @@ msgstr "இந்த புத்தகத்தை கிளவுட் & ச�
 msgid "Remove"
 msgstr "நீக்கு"
 
+msgid "Remove from Library, Keep File"
+msgstr "நூலகத்திலிருந்து அகற்று, கோப்பை வைத்திரு"
+
+msgid "Remove this book from your library and the cloud? The file stays on this device."
+msgstr "இந்த நூலை உங்கள் நூலகம் மற்றும் மேகக்கணியிலிருந்து அகற்றவா? கோப்பு இந்த சாதனத்தில் இருக்கும்."
+
 msgid "Remove from Cloud Only"
 msgstr "கிளவுட்டிலிருந்து மட்டும் நீக்கு"
 
@@ -287,14 +293,14 @@ msgstr "எந்த நூலும் திறக்கப்படவில�
 msgid "Uploaded to Readest:"
 msgstr "Readest-இல் பதிவேற்றப்பட்டது:"
 
+msgid "Auto sync"
+msgstr "தானியங்கி ஒத்திசைவு"
+
 msgid "Log in Readest Account"
 msgstr "Readest கணக்கில் உள்நுழைக"
 
 msgid "Log out as %1"
 msgstr "%1 ஆக வெளியேறு"
-
-msgid "Auto sync"
-msgstr "தானியங்கி ஒத்திசைவு"
 
 msgid "Readest library"
 msgstr "Readest நூலகம்"
@@ -337,9 +343,6 @@ msgstr "புதுப்பிப்பைச் சரிபார்"
 
 msgid "Please login first"
 msgstr "முதலில் உள்நுழைக"
-
-msgid "Please configure Readest settings first"
-msgstr "முதலில் Readest அமைப்புகளை உள்ளமைக்கவும்"
 
 msgid "(none)"
 msgstr "(இல்லை)"
@@ -506,9 +509,6 @@ msgstr "முழு ஒத்திசைவு: அனைத்து கு�
 msgid "Pulling annotations..."
 msgstr "குறிப்புகள் பெறப்படுகின்றன…"
 
-msgid "Authentication failed, please login again"
-msgstr "அங்கீகாரம் தோல்வி, மீண்டும் உள்நுழைக"
-
 msgid "Failed to pull annotations"
 msgstr "குறிப்புகளைப் பெறுவதில் தோல்வி"
 
@@ -521,11 +521,17 @@ msgstr "%1 குறிப்புகள் பெறப்பட்டன"
 msgid "Your Readest session has expired. Please log in again."
 msgstr "உங்கள் Readest அமர்வு காலாவதியானது. மீண்டும் உள்நுழைக."
 
+msgid "Authentication failed, please login again"
+msgstr "அங்கீகாரம் தோல்வி, மீண்டும் உள்நுழைக"
+
 msgid "Login"
 msgstr "உள்நுழை"
 
 msgid "Please enter both email and password"
 msgstr "மின்னஞ்சல் மற்றும் கடவுச்சொல்லை உள்ளிடவும்"
+
+msgid "Sign in with a code"
+msgstr "குறியீட்டுடன் உள்நுழையவும்"
 
 msgid "Please configure Supabase URL and API key first"
 msgstr "முதலில் Supabase URL மற்றும் API விசையை உள்ளமைக்கவும்"
@@ -533,11 +539,17 @@ msgstr "முதலில் Supabase URL மற்றும் API விச�
 msgid "Logging in..."
 msgstr "உள்நுழைகிறது…"
 
+msgid "Login failed: %1"
+msgstr "உள்நுழைவில் தோல்வி: %1"
+
 msgid "Successfully logged in to Readest"
 msgstr "Readest இல் வெற்றிகரமாக உள்நுழைந்தீர்கள்"
 
-msgid "Login failed: %1"
-msgstr "உள்நுழைவில் தோல்வி: %1"
+msgid "Scan the QR code with a phone signed in to Readest, or open %1 and enter this code:\n\n%2"
+msgstr "Readest-இல் உள்நுழைந்த தொலைபேசியால் QR குறியீட்டை ஸ்கேன் செய்யவும், அல்லது %1 ஐத் திறந்து இந்தக் குறியீட்டை உள்ளிடவும்:\n\n%2"
+
+msgid "The code expired. Please try again."
+msgstr "குறியீடு காலாவதியானது. மீண்டும் முயற்சிக்கவும்."
 
 msgid "Logged out from Readest"
 msgstr "Readest இலிருந்து வெளியேறினீர்கள்"
@@ -566,8 +578,65 @@ msgstr "வாசிப்பு முன்னேற்றத்தைப் �
 msgid "Reading progress synchronized"
 msgstr "வாசிப்பு முன்னேற்றம் ஒத்திசைக்கப்பட்டது"
 
+msgid "Saved reading position cannot be used with this copy of the book"
+msgstr "சேமித்த வாசிப்பு நிலையை இந்தப் புத்தகப் பிரதியுடன் பயன்படுத்த முடியாது"
+
 msgid "No saved reading progress found for this book"
 msgstr "இந்த நூலுக்கான சேமிக்கப்பட்ட வாசிப்பு முன்னேற்றம் இல்லை"
+
+msgid "Sync was cancelled."
+msgstr "ஒத்திசைவு ரத்து செய்யப்பட்டது."
+
+msgid "The connection timed out. Please try again."
+msgstr "இணைப்பு நேரம் முடிந்தது. மீண்டும் முயலவும்."
+
+msgid "The network is unreachable. Please check the internet connection."
+msgstr "நெட்வொர்க்கை அணுக முடியவில்லை. இணைய இணைப்பைச் சரிபார்க்கவும்."
+
+msgid "The server could not be found. Please check the internet connection."
+msgstr "சேவையகம் கண்டறியப்படவில்லை. இணைய இணைப்பைச் சரிபார்க்கவும்."
+
+msgid "The server refused the connection. Please try again later."
+msgstr "சேவையகம் இணைப்பை மறுத்தது. பின்னர் மீண்டும் முயலவும்."
+
+msgid "The connection was interrupted. Please try again."
+msgstr "இணைப்பு துண்டிக்கப்பட்டது. மீண்டும் முயலவும்."
+
+msgid "A secure connection to the server could not be established."
+msgstr "சேவையகத்துடன் பாதுகாப்பான இணைப்பை ஏற்படுத்த முடியவில்லை."
+
+msgid "Authentication failed. Please log in again."
+msgstr "அங்கீகாரம் தோல்வியடைந்தது. மீண்டும் உள்நுழையவும்."
+
+msgid "The account changed during sync."
+msgstr "ஒத்திசைவின் போது கணக்கு மாறியது."
+
+msgid "The file was not found in the cloud."
+msgstr "கிளவுடில் கோப்பு கண்டறியப்படவில்லை."
+
+msgid "The local file is missing."
+msgstr "உள்ளூர் கோப்பு இல்லை."
+
+msgid "An internal error occurred. Please try again."
+msgstr "உள் பிழை ஏற்பட்டது. மீண்டும் முயலவும்."
+
+msgid "Access denied."
+msgstr "அணுகல் மறுக்கப்பட்டது."
+
+msgid "Not found on the server."
+msgstr "சேவையகத்தில் கண்டறியப்படவில்லை."
+
+msgid "The file is too large."
+msgstr "கோப்பு மிகப் பெரியது."
+
+msgid "Too many requests. Please try again later."
+msgstr "அதிகமான கோரிக்கைகள். பின்னர் மீண்டும் முயலவும்."
+
+msgid "The server is temporarily unavailable. Please try again later."
+msgstr "சேவையகம் தற்காலிகமாகக் கிடைக்கவில்லை. பின்னர் மீண்டும் முயலவும்."
+
+msgid "The request failed. Please try again."
+msgstr "கோரிக்கை தோல்வியடைந்தது. மீண்டும் முயலவும்."
 
 msgid "Reading statistics are up to date"
 msgstr "வாசிப்பு புள்ளிவிவரங்கள் புதுப்பித்த நிலையில் உள்ளன"

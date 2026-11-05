@@ -4,18 +4,30 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Insets } from '@/types/misc';
 import { useEnv } from '@/context/EnvContext';
 import { useThemeStore } from '@/store/themeStore';
+import { useSettingsStore } from '@/store/settingsStore';
 import { useReaderStore } from '@/store/readerStore';
 import { useBookProgress } from '@/store/readerProgressStore';
 import { useSidebarStore } from '@/store/sidebarStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useTranslation } from '@/hooks/useTranslation';
 import { getGridTemplate, getInsetEdges } from '@/utils/grid';
+import { getRendererLayout, isRendererSpread } from '@/utils/duo';
+import { useDuoPose } from '@/hooks/useDuoPose';
+import {
+  getPageAreaInsets,
+  getReadingScreenInsets,
+  getRecordedScreenInsets,
+  getSpreadColumnGap,
+} from '@/utils/insets';
 import { tauriSetWindowTitle } from '@/utils/window';
 import { useContentInsets } from '../hooks/useContentInsets';
+import { usePageOverflow } from '../hooks/usePageOverflow';
 import { type BottomCornerRadii, getCellCornerRadii, NO_CORNERS } from '../utils/footerBand';
 import SearchResultsNav from './sidebar/SearchResultsNav';
+import VimCommandLine from './VimCommandLine';
 import BooknotesNav from './sidebar/BooknotesNav';
 import FoliateViewer from './FoliateViewer';
+import HandwritingOverlay from './handwriting/HandwritingOverlay';
 import SectionInfo from './SectionInfo';
 import HeaderBar from './HeaderBar';
 import PageNavigationButtons from './PageNavigationButtons';
@@ -68,6 +80,13 @@ interface BookCellProps {
   bookKey: string;
   index: number;
   gridInsets: Insets;
+  // The cell's insets for the toolbar chrome that shows with the status bar:
+  // on iPhone Duo those recorded with the status bar shown, elsewhere the live
+  // ones. gridInsets are the reading page's (see getReadingScreenInsets). The
+  // same as gridInsets except on iPhone Duo.
+  chromeInsets: Insets;
+  // Both of the cell's side edges are screen edges (a full-width cell).
+  spansWidth: boolean;
   screenInsets: Insets;
   // Rounded screen corners this cell's bottom edge meets.
   cornerRadii: BottomCornerRadii;
@@ -83,7 +102,9 @@ interface BookCellProps {
 const BookCellInner: React.FC<BookCellProps> = ({
   bookKey,
   index,
-  gridInsets,
+  gridInsets: cellInsets,
+  chromeInsets: chromeCellInsets,
+  spansWidth,
   screenInsets,
   cornerRadii,
   appServiceHasRoundedWindow,
@@ -114,7 +135,33 @@ const BookCellInner: React.FC<BookCellProps> = ({
   // progress-store split removed.
   const progress = useBookProgress(bookKey);
   const viewState = useReaderStore((s) => s.viewStates[bookKey]);
+  const getView = useReaderStore((s) => s.getView);
   const viewSettings = viewState?.viewSettings ?? null;
+
+  // On iPhone Duo a two-column spread is centred on the display (spine on the
+  // fold) by making the cell's horizontal insets symmetric; everything in the
+  // cell lays out against these (#6307). Cells that share the screen have an
+  // inset on their outer edge only, so a symmetric pad would leave a dead band
+  // against their neighbour. Off the Duo the cell's insets are used as they are.
+  const isIPhoneDuo = useThemeStore((s) => s.isIPhoneDuo);
+  const duoFold = useThemeStore((s) => s.duoFold);
+  const duoPose = useDuoPose();
+  const isFixedLayout = !!getBookData(bookKey)?.isFixedLayout;
+  const pageWidth = window.innerWidth - cellInsets.left - cellInsets.right;
+  const rendererLayout = viewSettings
+    ? getRendererLayout(viewSettings, duoPose, pageWidth, duoFold)
+    : null;
+  const isSpread =
+    isIPhoneDuo &&
+    spansWidth &&
+    !!viewSettings &&
+    !!rendererLayout &&
+    isRendererSpread(viewSettings, rendererLayout, duoPose, isFixedLayout, pageWidth);
+  const gridInsets = useMemo(() => getPageAreaInsets(cellInsets, isSpread), [cellInsets, isSpread]);
+  const chromeGridInsets = useMemo(
+    () => getPageAreaInsets(chromeCellInsets, isSpread),
+    [chromeCellInsets, isSpread],
+  );
 
   // config / bookData are read imperatively: their relevant fields are
   // written alongside progress (setProgress / saveConfig), so the
@@ -127,6 +174,13 @@ const BookCellInner: React.FC<BookCellProps> = ({
   // (margins are unchanged) but update when a margin setting changes — even
   // though saveViewSettings mutates viewSettings in place (#4898).
   const { viewInsets, contentInsets } = useContentInsets(viewSettings, gridInsets);
+  // A fixed-layout page fills the screen in fit-page mode; zoomed in or
+  // scrolled, its header and footer would cover its content, so they hide
+  // (#6596).
+  const pageOverflowing = usePageOverflow(
+    getView(bookKey)?.renderer,
+    !!bookData?.isFixedLayout && !viewSettings?.vertical,
+  );
 
   // The page content (viewer + its header/footer chrome) that the pull-down
   // bookmark gesture slides as one block.
@@ -144,6 +198,12 @@ const BookCellInner: React.FC<BookCellProps> = ({
   const { section, pageinfo, sectionLabel } = progress || {};
   const viewerKey = viewState.viewerKey;
   const horizontalGapPercent = viewSettings.gapPercent;
+  // Read on each relocate, which also follows a 1 <-> 2 column re-layout.
+  // The gap the renderer was given, widened over the fold on iPhone Duo.
+  const columnGap = getSpreadColumnGap(
+    { ...viewSettings, columnGapPx: rendererLayout?.columnGapPx ?? viewSettings.columnGapPx },
+    getView(bookKey)?.renderer?.columnCount ?? 1,
+  );
   const showHeader = viewSettings.showHeader;
   const showFooter = viewSettings.showFooter;
 
@@ -161,7 +221,7 @@ const BookCellInner: React.FC<BookCellProps> = ({
     >
       <HeaderBar
         bookKey={bookKey}
-        gridInsets={gridInsets}
+        gridInsets={chromeGridInsets}
         screenInsets={screenInsets}
         bookTitle={book.title}
         isTopLeft={index === 0}
@@ -229,6 +289,8 @@ const BookCellInner: React.FC<BookCellProps> = ({
             horizontalGap={horizontalGapPercent}
             contentInsets={contentInsets}
             gridInsets={gridInsets}
+            columnGap={columnGap}
+            hidden={pageOverflowing}
           />
         )}
         <HintInfo
@@ -240,6 +302,7 @@ const BookCellInner: React.FC<BookCellProps> = ({
           horizontalGap={horizontalGapPercent}
           contentInsets={contentInsets}
           gridInsets={gridInsets}
+          columnGap={columnGap}
         />
         {viewSettings.readingRulerEnabled && viewState?.inited && (
           <ReadingRuler
@@ -261,27 +324,32 @@ const BookCellInner: React.FC<BookCellProps> = ({
             horizontalGap={horizontalGapPercent}
             contentInsets={contentInsets}
             gridInsets={gridInsets}
+            columnGap={columnGap}
             cornerRadii={cornerRadii}
+            hidden={pageOverflowing}
           />
         )}
       </div>
+      {/* After the page chrome so it can't paint over ink near the edges. */}
+      <HandwritingOverlay bookKey={bookKey} gridInsets={gridInsets} />
       <BookmarkPullDown bookKey={bookKey} ribbonHidden={!!hoveredBookKey} slideRef={slideRef} />
       <PageNavigationButtons bookKey={bookKey} isDropdownOpen={isDropdownOpen} />
       <SearchResultsNav bookKey={bookKey} gridInsets={gridInsets} />
+      <VimCommandLine bookKey={bookKey} gridInsets={gridInsets} />
       <BooknotesNav bookKey={bookKey} gridInsets={gridInsets} toc={bookDoc.toc || []} />
-      <FootnotePopup bookKey={bookKey} bookDoc={bookDoc} />
+      <FootnotePopup bookKey={bookKey} bookDoc={bookDoc} gridInsets={gridInsets} />
       {/* After FootnotePopup so the lookup popups stack above the footnote
           popup (and its dismiss overlay) when the user selects text inside it.
           The selection toolbar no longer rides on this order — it has its own
           z-[43] band, above the footnote popup's z-[42] (#6145). */}
-      <Annotator bookKey={bookKey} contentInsets={contentInsets} />
+      <Annotator bookKey={bookKey} contentInsets={contentInsets} gridInsets={gridInsets} />
       <FooterBar
         bookKey={bookKey}
         bookFormat={book.format}
         section={section}
         pageinfo={pageinfo}
         isHoveredAnim={false}
-        gridInsets={gridInsets}
+        gridInsets={chromeGridInsets}
       />
       <ReadingStatsTracker bookKey={bookKey} />
     </div>
@@ -289,6 +357,24 @@ const BookCellInner: React.FC<BookCellProps> = ({
 };
 
 const BookCell = React.memo(BookCellInner);
+
+const getPerBookInsets = (bookKeys: string[], insets: Insets | null, aspectRatio: number) => {
+  if (!insets) return [];
+  return bookKeys.map((_bookKey, index) => {
+    const { top, right, bottom, left } = getInsetEdges(index, bookKeys.length, aspectRatio);
+    return {
+      top: top ? insets.top : 0,
+      right: right ? insets.right : 0,
+      bottom: bottom ? insets.bottom : 0,
+      left: left ? insets.left : 0,
+    };
+  });
+};
+
+const cellSpansWidth = (index: number, count: number, aspectRatio: number) => {
+  const { left, right } = getInsetEdges(index, count, aspectRatio);
+  return left && right;
+};
 
 const BooksGrid: React.FC<BooksGridProps> = ({ bookKeys, onCloseBook, onGoToLibrary }) => {
   const _ = useTranslation();
@@ -302,7 +388,14 @@ const BooksGrid: React.FC<BooksGridProps> = ({ bookKeys, onCloseBook, onGoToLibr
   const sideBarBookKey = useSidebarStore((s) => s.sideBarBookKey);
   const [dropdownOpenBook, setDropdownOpenBook] = useState<string>('');
 
-  const { safeAreaInsets: screenInsets, screenCornerRadius } = useThemeStore();
+  const {
+    safeAreaInsets: screenInsets,
+    statusBarHiddenInsets,
+    statusBarShownInsets,
+    isIPhoneDuo,
+    screenCornerRadius,
+  } = useThemeStore();
+  const alwaysShowStatusBar = useSettingsStore((s) => s.settings.alwaysShowStatusBar);
   const aspectRatio = window.innerWidth / window.innerHeight;
   const gridTemplate = getGridTemplate(bookKeys.length, aspectRatio);
 
@@ -324,21 +417,53 @@ const BooksGrid: React.FC<BooksGridProps> = ({ bookKeys, onCloseBook, onGoToLibr
   // to BookCell.gridInsets, and BookCell is React.memo'd. As long as
   // bookKeys / screenInsets / aspectRatio don't change, the cells'
   // gridInsets props stay reference-equal across renders.
-  const perBookGridInsets = useMemo<Insets[]>(() => {
-    if (!screenInsets) return [];
-    return bookKeys.map((_bookKey, index) => {
-      const { top, right, bottom, left } = getInsetEdges(index, bookKeys.length, aspectRatio);
-      return {
-        top: top ? screenInsets.top : 0,
-        right: right ? screenInsets.right : 0,
-        bottom: bottom ? screenInsets.bottom : 0,
-        left: left ? screenInsets.left : 0,
-      };
-    });
+  // On iPhone Duo the toolbars keep the insets seen with the status bar shown:
+  // the strip shows and hides with them, and its live inset lands a moment
+  // after each, which would move them on every toggle.
+  const chromeScreenInsets = useMemo(
+    () =>
+      isIPhoneDuo && !alwaysShowStatusBar && screenInsets
+        ? getReadingScreenInsets(
+            screenInsets,
+            getRecordedScreenInsets(statusBarShownInsets, window.innerWidth, window.innerHeight),
+            window.innerWidth,
+            window.innerHeight,
+          )
+        : screenInsets,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [screenInsets, statusBarShownInsets, isIPhoneDuo, alwaysShowStatusBar, aspectRatio],
+  );
+  const perBookChromeInsets = useMemo<Insets[]>(
+    () => getPerBookInsets(bookKeys, chromeScreenInsets, aspectRatio),
     // aspectRatio is recomputed every render but its value is window-derived
     // and won't change between resizes; including it explicitly so an
     // orientation change still busts the cache.
-  }, [bookKeys, screenInsets, aspectRatio]);
+    [bookKeys, chromeScreenInsets, aspectRatio],
+  );
+  // On iPhone Duo the reading page keeps the top and side insets seen with the
+  // status bar hidden, so showing the toolbar (and with it the status strip) does not
+  // re-paginate. Elsewhere there is no record to apply: the page and the chrome
+  // share the live insets.
+  const perBookGridInsets = useMemo<Insets[]>(() => {
+    const readingInsets =
+      screenInsets &&
+      getReadingScreenInsets(
+        screenInsets,
+        isIPhoneDuo && !alwaysShowStatusBar
+          ? getRecordedScreenInsets(statusBarHiddenInsets, window.innerWidth, window.innerHeight)
+          : null,
+        window.innerWidth,
+        window.innerHeight,
+      );
+    return getPerBookInsets(bookKeys, readingInsets, aspectRatio);
+  }, [
+    bookKeys,
+    screenInsets,
+    statusBarHiddenInsets,
+    isIPhoneDuo,
+    alwaysShowStatusBar,
+    aspectRatio,
+  ]);
 
   // Memoized like perBookGridInsets so the React.memo'd cells keep stable props.
   const perBookCornerRadii = useMemo<BottomCornerRadii[]>(
@@ -386,7 +511,9 @@ const BooksGrid: React.FC<BooksGridProps> = ({ bookKeys, onCloseBook, onGoToLibr
           bookKey={bookKey}
           index={index}
           gridInsets={perBookGridInsets[index]!}
-          screenInsets={screenInsets}
+          chromeInsets={perBookChromeInsets[index]!}
+          spansWidth={cellSpansWidth(index, bookKeys.length, aspectRatio)}
+          screenInsets={chromeScreenInsets ?? screenInsets}
           cornerRadii={perBookCornerRadii[index] ?? NO_CORNERS}
           appServiceHasRoundedWindow={appServiceHasRoundedWindow}
           isHoveredAnim={isHoveredAnim}

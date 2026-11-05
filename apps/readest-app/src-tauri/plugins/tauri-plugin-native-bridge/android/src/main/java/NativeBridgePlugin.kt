@@ -37,6 +37,10 @@ import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.util.Base64
 import android.view.PixelCopy
+import android.view.Gravity
+import android.widget.ImageView
+import android.widget.PopupWindow
+import android.graphics.drawable.ColorDrawable
 import android.webkit.WebView
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
@@ -54,11 +58,13 @@ import androidx.browser.customtabs.CustomTabsIntent
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.Permission
+import app.tauri.annotation.PermissionCallback
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.JSArray
 import app.tauri.plugin.Plugin
 import app.tauri.plugin.Invoke
+import app.tauri.PermissionState
 import org.json.JSONArray
 import java.io.*
 import kotlin.math.abs
@@ -142,6 +148,41 @@ class ShowLookupPopoverArgs {
 }
 
 @InvokeArg
+class AnkiReadDeckArgs {
+    var deckIds: Array<Long> = emptyArray()
+    var withCards: Boolean = false
+}
+
+@InvokeArg
+class AnkiOutgoingNoteArg {
+    var fields: Array<String> = emptyArray()
+    var tags: Array<String> = emptyArray()
+}
+
+@InvokeArg
+class AnkiAddNotesArgs {
+    var deckName: String = ""
+    var notes: Array<AnkiOutgoingNoteArg> = emptyArray()
+}
+
+@InvokeArg
+class AnkiTagUpdateArg {
+    var id: Long = 0
+    var tags: Array<String> = emptyArray()
+}
+
+@InvokeArg
+class AnkiUpdateTagsArgs {
+    var notes: Array<AnkiTagUpdateArg> = emptyArray()
+}
+
+@InvokeArg
+class SetLookupAppArgs {
+    var packageName: String? = null
+    var className: String? = null
+}
+
+@InvokeArg
 class FetchProductsRequestArgs {
     val productIds: List<String>? = null
 }
@@ -177,6 +218,11 @@ class CaptureWebviewRegionArgs {
 }
 
 @InvokeArg
+class UncoverWebviewRegionArgs {
+    var token: Int = 0
+}
+
+@InvokeArg
 class UpdateBookshelfWidgetTtsArgs {
     var active: Boolean = false
     var playing: Boolean = false
@@ -193,6 +239,25 @@ class UpdateBookshelfWidgetRequestArgs {
     var tts: UpdateBookshelfWidgetTtsArgs? = null
 }
 
+
+@InvokeArg
+class UpdateReadingWidgetRequestArgs {
+    var appWidgetId: Int = AppWidgetManager.INVALID_APPWIDGET_ID
+    // Empty means "nothing currently reading".
+    var hash: String = ""
+    var title: String = ""
+    var author: String = ""
+    // Numeric value for the progress bar.
+    var percent: Int = 0
+    var coverPath: String = ""
+    // The already-localized text stats to show, in order.
+    var stats: List<String> = emptyList()
+    var headerText: String = ""
+    var emptyTitle: String = ""
+    var isEink: Boolean = false
+    // Null when the caller sends no tts object.
+    var tts: UpdateBookshelfWidgetTtsArgs? = null
+}
 
 data class ProductData(
     val id: String,
@@ -223,9 +288,11 @@ interface KeyDownInterceptor {
 @TauriPlugin(
   permissions = [
     Permission(strings = [Manifest.permission.MANAGE_EXTERNAL_STORAGE], alias = "manageStorage"),
+    Permission(strings = [AnkiDroidLink.PERMISSION], alias = "anki"),
   ]
 )
 class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
+    private var nativePaper: NativePaperTurn? = null
     private val implementation = NativeBridge()
     private var webViewRef: WebView? = null
     private val billingManager by lazy {
@@ -236,6 +303,8 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
     // Cancelled in onDestroy so in-flight work can't resolve into — or leak —
     // a dead Activity.
     private val pluginScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var pageCoverToken = 0
+    private val pageCovers = mutableMapOf<Int, Pair<PopupWindow, Bitmap>>()
 
     // Held while the LocalSend service runs so multicast discovery
     // announcements are delivered; most Android devices filter multicast
@@ -296,6 +365,12 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
     }
 
     override fun onDestroy() {
+        nativePaper?.dispose(); nativePaper = null
+        pageCovers.values.forEach { (popup, bitmap) ->
+            popup.dismiss()
+            bitmap.recycle()
+        }
+        pageCovers.clear()
         stopAmbientLightUpdatesInternal()
         inputManager?.unregisterInputDeviceListener(gamepadInputListener)
         inputManager = null
@@ -345,6 +420,7 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
     override fun load(webView: WebView) {
         instance = this
         webViewRef = webView
+        webView.setOnTouchListener { _, event -> nativePaper?.touch(event); false }
         super.load(webView)
         inputManager = activity.getSystemService(Context.INPUT_SERVICE) as? InputManager
         gamepadConnected = hasConnectedGamepad()
@@ -1487,14 +1563,17 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
         }
     }
 
-    // A caller-supplied appWidgetId that isn't a currently bound Bookshelf
-    // Widget instance would otherwise write a preference/cover entry keyed by
-    // whatever id was given, orphaned since onDeleted only ever fires for real
-    // ids.
-    private fun isBoundBookshelfWidget(id: Int): Boolean {
+    // A caller-supplied appWidgetId that isn't a currently bound instance of
+    // the given provider would otherwise write a preference/cover entry keyed
+    // by whatever id was given, orphaned since onDeleted only ever fires for
+    // real ids.
+    private fun isBoundWidget(id: Int, providerClass: Class<*>): Boolean {
         val mgr = AppWidgetManager.getInstance(activity) ?: return false
-        return id in mgr.getAppWidgetIds(ComponentName(activity, ReadingWidgetProvider::class.java))
+        return id in mgr.getAppWidgetIds(ComponentName(activity, providerClass))
     }
+    private fun isBoundBookshelfWidget(id: Int) = isBoundWidget(id, BookshelfWidgetProvider::class.java)
+    private fun isBoundReadingWidget(id: Int) =
+        isBoundWidget(id, ReadingWidgetProvider::class.java)
 
     @Command
     fun update_bookshelf_widget(invoke: Invoke) {
@@ -1583,7 +1662,7 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
     @Command
     fun get_bookshelf_widget_instances(invoke: Invoke) {
         val mgr = AppWidgetManager.getInstance(activity)
-        val ids = mgr?.getAppWidgetIds(ComponentName(activity, ReadingWidgetProvider::class.java))
+        val ids = mgr?.getAppWidgetIds(ComponentName(activity, BookshelfWidgetProvider::class.java))
             ?: IntArray(0)
         val instances = org.json.JSONArray()
         for (id in ids) {
@@ -1606,6 +1685,75 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
     @Command
     fun set_bookshelf_widget_catalog(invoke: Invoke) {
         BookshelfWidgetStore.writeCatalog(activity, invoke.getArgs().toString())
+        invoke.resolve()
+    }
+
+    @Command
+    fun update_reading_widget(invoke: Invoke) {
+        val args = invoke.parseArgs(UpdateReadingWidgetRequestArgs::class.java)
+        if (!isBoundReadingWidget(args.appWidgetId)) {
+            invoke.reject("appWidgetId is not a bound widget")
+            return
+        }
+        pluginScope.launch {
+            val failed = withContext(Dispatchers.IO) {
+                val snapshot = org.json.JSONObject()
+                    .put("emptyTitle", args.emptyTitle)
+                    .put("headerText", args.headerText)
+                    .put("isEink", args.isEink)
+                var failedCover = 0
+                if (args.hash.isNotEmpty()) {
+                    snapshot.put("hash", args.hash)
+                        .put("title", args.title)
+                        .put("author", args.author)
+                        .put("percent", args.percent)
+                        .put("stats", org.json.JSONArray(args.stats))
+                    try {
+                        if (!ReadingWidgetStore.writeCover(activity, args.hash, args.coverPath)) {
+                            failedCover = 1
+                        }
+                    } catch (e: Exception) {
+                        failedCover = 1
+                        Log.w("NativeBridgePlugin", "reading widget cover failed for ${args.hash}", e)
+                    }
+                }
+                args.tts?.let { tts ->
+                    snapshot.put(
+                        "tts",
+                        org.json.JSONObject()
+                            .put("active", tts.active)
+                            .put("playing", tts.playing)
+                    )
+                }
+                // The widget may have been removed while the cover was written; don't orphan its snapshot.
+                if (isBoundReadingWidget(args.appWidgetId)) {
+                    ReadingWidgetStore.writeSnapshot(activity, args.appWidgetId, snapshot.toString())
+                }
+                failedCover
+            }
+            if (isActive) invoke.resolve(JSObject().put("failed", failed))
+        }
+    }
+
+    @Command
+    fun get_reading_widget_instances(invoke: Invoke) {
+        val mgr = AppWidgetManager.getInstance(activity)
+        val ids = mgr?.getAppWidgetIds(ComponentName(activity, ReadingWidgetProvider::class.java))
+            ?: IntArray(0)
+        val instances = org.json.JSONArray()
+        for (id in ids) {
+            instances.put(
+                ReadingWidgetStore.readInstanceSettings(activity, id).toJson().put("appWidgetId", id)
+            )
+        }
+        val ret = JSObject()
+        ret.put("instances", instances)
+        invoke.resolve(ret)
+    }
+
+    @Command
+    fun set_reading_widget_catalog(invoke: Invoke) {
+        ReadingWidgetStore.writeCatalog(activity, invoke.getArgs().toString())
         invoke.resolve()
     }
 
@@ -1772,6 +1920,8 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
      * web browsers so an OEM browser that registers `ACTION_PROCESS_TEXT`
      * (VIVO / iQOO OriginOS — issue #4559) can't swallow the lookup:
      *
+     * - **An app chosen in Settings (#4937) or from the chooser below that
+     *   still handles the intent** → launch it directly.
      * - **No browser among the handlers** → dispatch implicitly, exactly
      *   as before. A single handler goes straight through; multiple
      *   handlers raise the system disambiguation dialog with its native
@@ -1842,12 +1992,13 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
                         activity.startActivity(intent)
                     }
                     is LookupDispatch.DispatchChooser -> {
-                        // We only reach here when the remembered app (if any)
-                        // was stale — otherwise it would have been launched
-                        // directly. Drop it so a fresh pick replaces it.
-                        if (remembered != null) clearRememberedDictionary()
                         startBrowserExcludingChooser(intent, dispatch.exclude)
                     }
+                }
+                // A remembered app that wasn't launched no longer handles the
+                // intent (uninstalled); drop it so Settings shows no choice.
+                if (remembered != null && dispatch != LookupDispatch.DispatchExplicit(remembered)) {
+                    clearRememberedDictionary()
                 }
 
                 val ret = JSObject()
@@ -1913,43 +2064,177 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
     }
 
     /**
-     * Report the dictionary app currently remembered for the
-     * browser-excluding chooser (see [show_lookup_popover]), so the
-     * settings UI can offer a "reset" affordance. Resolves with
-     * `{ packageName, label }` when one is remembered and still
-     * installed, or `{}` otherwise (clearing a stale entry on the way).
+     * List the apps a lookup can be sent to — every non-browser
+     * `ACTION_PROCESS_TEXT` handler — for the Settings picker (#4937).
+     * Resolves with `{ apps: [{ packageName, className, label, selected }] }`;
+     * `selected` marks the app saved by [set_lookup_app] or remembered from
+     * the browser-excluding chooser.
      */
     @Command
-    fun get_lookup_dictionary(invoke: Invoke) {
-        val ret = JSObject()
-        val remembered = readRememberedDictionary() ?: return invoke.resolve(ret)
-        try {
-            val pm = activity.packageManager
-            val appInfo = pm.getApplicationInfo(remembered.packageName, 0)
-            ret.put("packageName", remembered.packageName)
-            ret.put("label", pm.getApplicationLabel(appInfo).toString())
-        } catch (e: PackageManager.NameNotFoundException) {
-            // App was uninstalled — drop the stale memory and report none.
-            clearRememberedDictionary()
-        } catch (e: Exception) {
-            Log.e("NativeBridgePlugin", "get_lookup_dictionary failed", e)
+    fun get_lookup_apps(invoke: Invoke) {
+        pluginScope.launch {
+            try {
+                val apps = withContext(Dispatchers.IO) {
+                    val pm = activity.packageManager
+                    val probe = Intent(Intent.ACTION_PROCESS_TEXT).setType("text/plain")
+                    val browserPackages = queryBrowserPackages(pm)
+                    val remembered = readRememberedDictionary()
+                    val list = JSArray()
+                    pm.queryIntentActivities(probe, 0)
+                        .filter { it.activityInfo.packageName !in browserPackages }
+                        .forEach {
+                            val handler = LookupHandler(it.activityInfo.packageName, it.activityInfo.name)
+                            list.put(JSObject().apply {
+                                put("packageName", handler.packageName)
+                                put("className", handler.className)
+                                put("label", it.loadLabel(pm).toString())
+                                put("selected", handler == remembered)
+                            })
+                        }
+                    list
+                }
+                invoke.resolve(JSObject().apply { put("apps", apps) })
+            } catch (e: Exception) {
+                Log.e("NativeBridgePlugin", "get_lookup_apps failed", e)
+                invoke.reject("Failed to list lookup apps: ${e.message}")
+            }
         }
-        invoke.resolve(ret)
     }
 
-    /** Forget the remembered dictionary app so the next lookup re-prompts. */
+    /**
+     * Save the app lookups go to, or forget it when `packageName` is
+     * omitted so the next lookup asks again.
+     */
     @Command
-    fun clear_lookup_dictionary(invoke: Invoke) {
-        val ret = JSObject()
-        try {
+    fun set_lookup_app(invoke: Invoke) {
+        val args = invoke.parseArgs(SetLookupAppArgs::class.java)
+        val pkg = args.packageName
+        val cls = args.className
+        if (pkg.isNullOrEmpty() || cls.isNullOrEmpty()) {
             clearRememberedDictionary()
-            ret.put("success", true)
-        } catch (e: Exception) {
-            Log.e("NativeBridgePlugin", "clear_lookup_dictionary failed", e)
-            ret.put("success", false)
-            ret.put("error", e.message ?: "unknown")
+        } else {
+            lookupPrefs().edit()
+                .putString(LOOKUP_PREF_PACKAGE, pkg)
+                .putString(LOOKUP_PREF_CLASS, cls)
+                .apply()
         }
-        invoke.resolve(ret)
+        invoke.resolve()
+    }
+
+    // AnkiDroid link (#789): the Vocabulary window syncs with an AnkiDroid
+    // deck and imports other decks. Expected failures resolve with
+    // `error` ("permission", "not_ready") so the UI can explain them.
+
+    @Command
+    fun anki_status(invoke: Invoke) {
+        val installed = try {
+            activity.packageManager.getPackageInfo(AnkiDroidLink.PACKAGE, 0)
+            true
+        } catch (e: PackageManager.NameNotFoundException) {
+            false
+        }
+        invoke.resolve(JSObject().apply {
+            put("installed", installed)
+            put("granted", getPermissionState("anki") == PermissionState.GRANTED)
+        })
+    }
+
+    @Command
+    fun anki_request_permission(invoke: Invoke) {
+        if (getPermissionState("anki") == PermissionState.GRANTED) {
+            invoke.resolve(JSObject().apply { put("granted", true) })
+        } else {
+            requestPermissionForAlias("anki", invoke, "ankiPermissionCallback")
+        }
+    }
+
+    @PermissionCallback
+    private fun ankiPermissionCallback(invoke: Invoke) {
+        invoke.resolve(JSObject().apply {
+            put("granted", getPermissionState("anki") == PermissionState.GRANTED)
+        })
+    }
+
+    private fun ankiCall(invoke: Invoke, work: (android.content.ContentResolver) -> JSObject) {
+        pluginScope.launch {
+            try {
+                invoke.resolve(withContext(Dispatchers.IO) { work(activity.contentResolver) })
+            } catch (e: SecurityException) {
+                invoke.resolve(JSObject().apply { put("error", "permission") })
+            } catch (e: IllegalStateException) {
+                // AnkiDroid has not set up its collection yet (never opened).
+                invoke.resolve(JSObject().apply { put("error", "not_ready") })
+            } catch (e: Exception) {
+                Log.e("NativeBridgePlugin", "AnkiDroid call failed", e)
+                invoke.reject("AnkiDroid call failed: ${e.message}")
+            }
+        }
+    }
+
+    @Command
+    fun anki_list_decks(invoke: Invoke) = ankiCall(invoke) { cr ->
+        val decks = JSArray()
+        AnkiDroidLink.listDecks(cr).forEach { d ->
+            decks.put(JSObject().apply {
+                put("id", d.id)
+                put("name", d.name)
+            })
+        }
+        JSObject().apply { put("decks", decks) }
+    }
+
+    @Command
+    fun anki_read_deck(invoke: Invoke) {
+        val args = invoke.parseArgs(AnkiReadDeckArgs::class.java)
+        ankiCall(invoke) { cr ->
+            val notes = JSArray()
+            AnkiDroidLink.readNotes(cr, args.deckIds.toList()).forEach { n ->
+                notes.put(JSObject().apply {
+                    put("id", n.id)
+                    put("fields", JSArray(n.fields))
+                    put("tags", n.tags)
+                })
+            }
+            val res = JSObject().apply { put("notes", notes) }
+            if (args.withCards) {
+                // The cards URI arrived in AnkiDroid 2.24; older versions reject it.
+                val cards = try {
+                    AnkiDroidLink.readCards(cr, args.deckIds.toList())
+                } catch (e: IllegalArgumentException) {
+                    null
+                }
+                if (cards != null) {
+                    val list = JSArray()
+                    cards.forEach { c ->
+                        list.put(JSObject().apply {
+                            put("noteId", c.noteId)
+                            put("cardType", c.type)
+                            put("interval", c.interval)
+                        })
+                    }
+                    res.put("cards", list)
+                }
+            }
+            res
+        }
+    }
+
+    @Command
+    fun anki_add_notes(invoke: Invoke) {
+        val args = invoke.parseArgs(AnkiAddNotesArgs::class.java)
+        ankiCall(invoke) { cr ->
+            val notes = args.notes.map { it.fields.toList() to it.tags.toList() }
+            JSObject().apply { put("added", AnkiDroidLink.addNotes(cr, args.deckName, notes)) }
+        }
+    }
+
+    @Command
+    fun anki_update_tags(invoke: Invoke) {
+        val args = invoke.parseArgs(AnkiUpdateTagsArgs::class.java)
+        ankiCall(invoke) { cr ->
+            val notes = args.notes.map { it.id to it.tags.toList() }
+            JSObject().apply { put("updated", AnkiDroidLink.updateTags(cr, notes)) }
+        }
     }
 
     /**
@@ -2005,7 +2290,7 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
                 event.error?.let { payload.put("error", it) }
                 emitOrQueue("web-browser-download", payload)
             },
-            completion = { hash, page ->
+            completion = { hash, page, image ->
                 activeWebBrowser = null
                 val ret = JSObject()
                 if (hash != null) ret.put("openBookHash", hash)
@@ -2014,6 +2299,12 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
                     captured.put("url", page.url)
                     captured.put("html", page.html)
                     ret.put("page", captured)
+                }
+                if (image != null) {
+                    val selected = JSObject()
+                    selected.put("url", image.url)
+                    selected.put("pageUrl", image.pageUrl)
+                    ret.put("image", selected)
                 }
                 invoke.resolve(ret)
             },
@@ -2087,6 +2378,30 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
     }
 
     /**
+     * Whether this device exposes a deep e-ink full-refresh mechanism we can
+     * drive. A read-only capability probe against [EinkRefreshController] (class
+     * reflection plus a system-service lookup) — it never drives the panel — so
+     * it is safe to call once at startup to decide whether to offer the "Refresh
+     * Page" / "Auto Full Refresh" options.
+     */
+    @Command
+    fun is_eink_refresh_supported(invoke: Invoke) {
+        // A confirmed-absent vendor hook resolves `supported:false` — JS caches
+        // that as authoritative and keeps the option hidden. An inconclusive read
+        // (a hook the reflection layer could not definitively rule out) is not a
+        // negative: reject so the JS probe drops its cache and retries on the
+        // next mount rather than latching a wrong 'unsupported' for the session.
+        val ret = JSObject()
+        try {
+            ret.put("supported", EinkRefreshController.isSupported(activity.applicationContext))
+            invoke.resolve(ret)
+        } catch (t: Throwable) {
+            Log.e("NativeBridgePlugin", "is_eink_refresh_supported inconclusive", t)
+            invoke.reject("eink capability probe inconclusive")
+        }
+    }
+
+    /**
      * Snapshot a region of the webview for the mesh page-curl texture
      * (readest#555). The rect arrives in CSS pixels of the JS viewport;
      * scaling by the display density (devicePixelRatio) maps it to window
@@ -2102,6 +2417,51 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
      * scales into a smaller bitmap for free and the moving page stays
      * visually sharp.
      */
+    /** DOM RAF completion does not mean WebView has submitted its new pixels
+     * to the activity surface. In particular a returning sheet must not copy
+     * the old page just after its covering canvas becomes hidden. */
+    private fun afterCaptureFrame(webView: WebView, invoke: Invoke, capture: () -> Unit) {
+        if (!webView.isAttachedToWindow || activity.isFinishing || activity.isDestroyed) {
+            invoke.reject("WebView not available")
+            return
+        }
+        val handler = Handler(Looper.getMainLooper())
+        var pending = true
+        val timeout = Runnable {
+            if (pending) {
+                pending = false
+                invoke.reject("WebView capture frame did not commit")
+            }
+        }
+        val committed = {
+            if (pending) {
+                pending = false
+                handler.removeCallbacks(timeout)
+                if (!webView.isAttachedToWindow || activity.isFinishing || activity.isDestroyed) {
+                    invoke.reject("WebView not available")
+                } else {
+                    capture()
+                }
+            }
+        }
+        handler.postDelayed(timeout, 2000)
+        webView.postVisualStateCallback(0L, object : WebView.VisualStateCallback() {
+            override fun onComplete(requestId: Long) {
+                if (!pending) return
+                if (Build.VERSION.SDK_INT >= 29 && webView.isHardwareAccelerated) {
+                    webView.viewTreeObserver.registerFrameCommitCallback {
+                        webView.post { committed() }
+                    }
+                } else {
+                    // Older Android lacks frame-commit callbacks. Wait until
+                    // a draw after visual readiness has traversed the view.
+                    webView.postOnAnimation { webView.postOnAnimation { committed() } }
+                }
+                webView.invalidate()
+            }
+        })
+    }
+
     @Command
     fun capture_webview_region(invoke: Invoke) {
         val args = invoke.parseArgs(CaptureWebviewRegionArgs::class.java)
@@ -2112,49 +2472,227 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
             return
         }
         activity.runOnUiThread {
-            val density = webView.resources.displayMetrics.density
-            val location = IntArray(2)
-            webView.getLocationInWindow(location)
-            val left = location[0] + (args.x * density).toInt()
-            val top = location[1] + (args.y * density).toInt()
-            val width = (args.width * density).toInt()
-            val height = (args.height * density).toInt()
-            if (width <= 0 || height <= 0) {
-                invoke.reject("Empty capture region")
-                return@runOnUiThread
-            }
-            val captureScale = minOf(density, 2f)
-            val destWidth = (args.width * captureScale).toInt()
-            val destHeight = (args.height * captureScale).toInt()
-            val bitmap = Bitmap.createBitmap(destWidth, destHeight, Bitmap.Config.ARGB_8888)
-            try {
-                PixelCopy.request(
-                    window,
-                    Rect(left, top, left + width, top + height),
-                    bitmap,
-                    { result ->
-                        if (result == PixelCopy.SUCCESS) {
-                            // Encode off the main thread; ~100ms of work for
-                            // a full-screen 2x JPEG.
-                            pluginScope.launch {
-                                val data = withContext(Dispatchers.IO) {
-                                    val out = ByteArrayOutputStream()
-                                    bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
-                                    Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+            afterCaptureFrame(webView, invoke) {
+                val density = webView.resources.displayMetrics.density
+                val location = IntArray(2)
+                webView.getLocationInWindow(location)
+                val left = location[0] + (args.x * density).toInt()
+                val top = location[1] + (args.y * density).toInt()
+                val width = (args.width * density).toInt()
+                val height = (args.height * density).toInt()
+                if (width <= 0 || height <= 0) {
+                    invoke.reject("Empty capture region")
+                    return@afterCaptureFrame
+                }
+                val captureScale = minOf(density, 2f)
+                val destWidth = (args.width * captureScale).toInt()
+                val destHeight = (args.height * captureScale).toInt()
+                val bitmap = Bitmap.createBitmap(destWidth, destHeight, Bitmap.Config.ARGB_8888)
+                try {
+                    PixelCopy.request(
+                        window,
+                        Rect(left, top, left + width, top + height),
+                        bitmap,
+                        { result ->
+                            if (result == PixelCopy.SUCCESS) {
+                                // Encode off the main thread; ~100ms of work for
+                                // a full-screen 2x JPEG.
+                                pluginScope.launch {
+                                    try {
+                                        val data = withContext(Dispatchers.IO) {
+                                            val out = ByteArrayOutputStream()
+                                            bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                                            Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+                                        }
+                                        invoke.resolve(JSObject().put("data", data))
+                                    } finally {
+                                        // The bridge owns encoded bytes now. Do not
+                                        // accumulate full-screen native bitmaps
+                                        // until GC interrupts a later page turn.
+                                        bitmap.recycle()
+                                    }
                                 }
-                                invoke.resolve(JSObject().put("data", data))
+                            } else {
+                                bitmap.recycle()
+                                invoke.reject("PixelCopy failed: $result")
                             }
-                        } else {
-                            invoke.reject("PixelCopy failed: $result")
-                        }
-                    },
-                    Handler(Looper.getMainLooper())
-                )
-            } catch (e: IllegalArgumentException) {
-                // Thrown when the rect falls outside the window bounds.
-                invoke.reject("Capture region out of bounds: ${e.message}")
+                        },
+                        Handler(Looper.getMainLooper())
+                    )
+                } catch (e: IllegalArgumentException) {
+                    // Thrown when the rect falls outside the window bounds.
+                    bitmap.recycle()
+                    invoke.reject("Capture region out of bounds: ${e.message}")
+                }
             }
         }
+    }
+
+    @Command
+    fun paper_curl(invoke: Invoke) {
+        val args = invoke.parseArgs(NativePaperArgs::class.java)
+        activity.runOnUiThread {
+            val webView = webViewRef
+            if (webView == null || activity.isDestroyed || activity.isFinishing) {
+                invoke.reject("WebView not available"); return@runOnUiThread
+            }
+            val paper = nativePaper ?: NativePaperTurn(activity, webView).also { nativePaper = it }
+            paper.command(args, invoke)
+        }
+    }
+
+    /** A separate window freezes the visible page while PixelCopy reads the
+     * activity window underneath. A View overlay would be captured again. */
+    @Command
+    fun cover_webview_region(invoke: Invoke) {
+        val args = invoke.parseArgs(CaptureWebviewRegionArgs::class.java)
+        activity.runOnUiThread {
+            val webView = webViewRef
+            if (webView == null || activity.isFinishing || activity.isDestroyed) {
+                invoke.reject("WebView not available")
+                return@runOnUiThread
+            }
+            val (x, y, width, height) = webViewRegion(args.x, args.y, args.width, args.height,
+                webView.resources.displayMetrics.density, webView.width, webView.height)
+            val location = IntArray(2)
+            webView.getLocationInWindow(location)
+            val left = location[0] + x
+            val top = location[1] + y
+            if (width <= 0 || height <= 0) {
+                invoke.reject("Empty cover region")
+                return@runOnUiThread
+            }
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            try {
+                PixelCopy.request(activity.window, Rect(left, top, left + width, top + height),
+                    bitmap, { result ->
+                        if (result != PixelCopy.SUCCESS || activity.isFinishing || activity.isDestroyed) {
+                            bitmap.recycle()
+                            invoke.reject("Page cover capture failed: $result")
+                            return@request
+                        }
+                        try {
+                            val image = ImageView(activity).apply {
+                                setImageBitmap(bitmap)
+                                scaleType = ImageView.ScaleType.FIT_XY
+                            }
+                            val popup = PopupWindow(image, width, height, false).apply {
+                                animationStyle = 0
+                                enterTransition = null
+                                exitTransition = null
+                                isTouchable = false
+                                isClippingEnabled = false
+                                // Stay under the keyboard: Android drops IME touches that pass through this window (#7171).
+                                inputMethodMode = PopupWindow.INPUT_METHOD_NEEDED
+                                softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
+                                setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+                                if (Build.VERSION.SDK_INT >= 29) setIsLaidOutInScreen(true)
+                            }
+                            val screen = IntArray(2)
+                            webView.getLocationOnScreen(screen)
+                            popup.showAtLocation(webView, Gravity.TOP or Gravity.LEFT,
+                                screen[0] + x, screen[1] + y)
+                            val token = ++pageCoverToken
+                            pageCovers[token] = Pair(popup, bitmap)
+                            // Resolve after the popup's first draw, before JS
+                            // removes its covering canvas for the next capture.
+                            image.postOnAnimation { image.postOnAnimation {
+                                invoke.resolve(JSObject().put("token", token))
+                            } }
+                        } catch (error: Exception) {
+                            bitmap.recycle()
+                            invoke.reject("Cannot cover page: ${error.message}")
+                        }
+                    }, Handler(Looper.getMainLooper()))
+            } catch (error: IllegalArgumentException) {
+                bitmap.recycle()
+                invoke.reject("Cover region out of bounds: ${error.message}")
+            }
+        }
+    }
+
+    @Command
+    fun uncover_webview_region(invoke: Invoke) {
+        val args = invoke.parseArgs(UncoverWebviewRegionArgs::class.java)
+        activity.runOnUiThread {
+            pageCovers.remove(args.token)?.let { (popup, bitmap) ->
+                popup.dismiss()
+                bitmap.recycle()
+            }
+            invoke.resolve()
+        }
+    }
+
+    // Handwriting (issue #3673). Vendor stylus SDKs stay behind
+    // PenInputController; see PenInputController.kt.
+    private val penController: PenInputController by lazy { PenInputControllerFactory.create() }
+
+    @Command
+    fun query_pen_capabilities(invoke: Invoke) {
+        val ret = JSObject()
+        ret.put("isBoox", penController.isBooxDevice())
+        ret.put("rawDrawing", penController.canRawDraw())
+        invoke.resolve(ret)
+    }
+
+    @InvokeArg
+    class StartRawDrawingArgs {
+        var left: Double = 0.0
+        var top: Double = 0.0
+        var width: Double = 0.0
+        var height: Double = 0.0
+        var strokeWidth: Double = 1.0
+        var strokeColor: String = "#000000"
+    }
+
+    /** Region and stroke width arrive in CSS px; the pen SDK works in view px. */
+    @Command
+    fun start_raw_drawing(invoke: Invoke) {
+        val args = invoke.parseArgs(StartRawDrawingArgs::class.java)
+        val webView = webViewRef ?: return invoke.reject("WebView not ready")
+        val density = webView.resources.displayMetrics.density
+        val color = try {
+            android.graphics.Color.parseColor(args.strokeColor)
+        } catch (_: IllegalArgumentException) {
+            android.graphics.Color.BLACK
+        }
+        activity.runOnUiThread {
+            penController.start(
+                webView,
+                PenRegion(
+                    (args.left * density).toFloat(),
+                    (args.top * density).toFloat(),
+                    (args.width * density).toFloat(),
+                    (args.height * density).toFloat(),
+                ),
+                (args.strokeWidth * density).toFloat(),
+                color,
+            ) { points, kind -> emitPenBatch(points, kind, density) }
+            invoke.resolve()
+        }
+    }
+
+    @Command
+    fun stop_raw_drawing(invoke: Invoke) {
+        activity.runOnUiThread {
+            penController.stop()
+            invoke.resolve()
+        }
+    }
+
+    private fun emitPenBatch(points: List<PenPoint>, kind: PenEventKind, density: Float) {
+        val arr = JSArray()
+        for (p in points) {
+            val o = JSObject()
+            o.put("x", p.x / density)
+            o.put("y", p.y / density)
+            o.put("pressure", p.pressure)
+            arr.put(o)
+        }
+        val payload = JSObject()
+        payload.put("kind", kind.name)
+        payload.put("points", arr)
+        triggerEvent("pen-stroke-batch", payload)
     }
 }
 

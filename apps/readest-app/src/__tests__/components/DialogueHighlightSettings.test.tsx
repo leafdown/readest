@@ -22,16 +22,42 @@ const renderPanel = (
       backgroundColor='#facc15'
       customTextColor={false}
       textColor=''
+      italic={false}
+      weight='normal'
+      onWeightChange={() => {}}
       onToggle={() => {}}
       onCustomBackgroundToggle={() => {}}
       onBackgroundColorChange={() => {}}
       onCustomTextColorToggle={() => {}}
       onTextColorChange={() => {}}
+      onItalicToggle={() => {}}
       {...overrides}
     />,
   );
 
 describe('DialogueHighlightSettings', () => {
+  it('offers weight independently of background and text color', () => {
+    const onWeightChange = vi.fn();
+    renderPanel({
+      dialogueHighlight: false,
+      customTextColor: false,
+      weight: 'normal',
+      onWeightChange,
+    });
+    const select = screen.getByRole('combobox', { name: 'Weight' });
+    expect(Array.from((select as HTMLSelectElement).options, (option) => option.text)).toEqual([
+      'Normal',
+      'Slightly heavier',
+      'Bold',
+    ]);
+    fireEvent.change(select, { target: { value: 'slightly-heavier' } });
+    expect(onWeightChange).toHaveBeenLastCalledWith('slightly-heavier');
+    fireEvent.change(select, { target: { value: 'bold' } });
+    expect(onWeightChange).toHaveBeenLastCalledWith('bold');
+    fireEvent.change(select, { target: { value: 'normal' } });
+    expect(onWeightChange).toHaveBeenLastCalledWith('normal');
+  });
+
   it('names the text-color switch accessibly', () => {
     renderPanel();
     expect(screen.getByRole('checkbox', { name: /^Text Color/ })).not.toBeNull();
@@ -77,5 +103,12 @@ describe('DialogueHighlightSettings', () => {
     cleanup();
     renderPanel({ customTextColor: true, textColor: '#112233' });
     expect(screen.getByText('Color')).not.toBeNull();
+  });
+
+  it('toggles italic text marking', () => {
+    const onItalicToggle = vi.fn();
+    renderPanel({ italic: false, onItalicToggle });
+    fireEvent.click(screen.getByRole('checkbox', { name: /^Italic Text/ }));
+    expect(onItalicToggle).toHaveBeenCalledWith(true);
   });
 });

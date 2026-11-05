@@ -298,7 +298,8 @@ export const publishSettingsIfChanged = async (settings: SystemSettings): Promis
       const previous = lastPublishedFields.get(path);
       if (equalShallow(current, previous)) continue;
       plainChanged[path] = current;
-      lastPublishedFields.set(path, current);
+      // Keep JSON snapshots independent of live settings mutated by editors.
+      lastPublishedFields.set(path, JSON.parse(JSON.stringify(current)));
     }
   }
 
@@ -409,7 +410,7 @@ export const applyRemoteSettings = (
       // plaintext so the post-save publish hook sees no diff.
       void sha256Hex(v).then((h) => setStoredEncryptedHash(path, h));
     } else {
-      lastPublishedFields.set(path, v);
+      lastPublishedFields.set(path, JSON.parse(JSON.stringify(v)));
     }
   }
 
@@ -462,6 +463,9 @@ const mergeSettings = (current: SystemSettings, patch: Partial<SystemSettings>):
   }
   if (patch.bookorbit) {
     out.bookorbit = { ...current.bookorbit, ...patch.bookorbit };
+  }
+  if (patch.grimmory) {
+    out.grimmory = { ...current.grimmory, ...patch.grimmory };
   }
   if (patch.readwise) {
     out.readwise = { ...current.readwise, ...patch.readwise };
@@ -534,7 +538,7 @@ export const initSettingsSync = (initialSettings?: SystemSettings): void => {
       // connection fields here is what stranded a configured-but-unpublished
       // URL — see CONNECTION_PATHS and #5141.)
       if (!ENCRYPTED_PATHS.has(path) && !CONNECTION_PATHS.has(path)) {
-        lastPublishedFields.set(path, v);
+        lastPublishedFields.set(path, JSON.parse(JSON.stringify(v)));
       }
     }
   }

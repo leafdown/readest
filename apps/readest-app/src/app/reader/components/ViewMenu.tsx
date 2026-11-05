@@ -3,13 +3,15 @@ import React, { useEffect } from 'react';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { BiMoon, BiSun } from 'react-icons/bi';
-import { PiGear } from 'react-icons/pi';
+import { PiGear, PiChartBar, PiCardsThree } from 'react-icons/pi';
 import { TbSunMoon } from 'react-icons/tb';
 import { MdZoomOut, MdZoomIn, MdCheck, MdInfoOutline, MdOutlineSensors } from 'react-icons/md';
 import { MdRemove, MdAdd, MdContrast } from 'react-icons/md';
 import { MdSync, MdSyncProblem } from 'react-icons/md';
 import { IoMdExpand } from 'react-icons/io';
 import { IoShareOutline } from 'react-icons/io5';
+import { setReadingStatsDialogVisible } from '@/components/stats/ReadingStatsDialog';
+import { setVocabularyDialogVisible } from '@/components/vocabulary/VocabularyDialog';
 import { TbArrowAutofitWidth } from 'react-icons/tb';
 import { TbColumns1, TbColumns2 } from 'react-icons/tb';
 import { TbCarouselVertical, TbCarouselHorizontal } from 'react-icons/tb';
@@ -35,10 +37,10 @@ import { navigateToLogin } from '@/utils/nav';
 import { getScrollGapAttr } from '@/utils/webtoon';
 import { applyPageTurnAttributes } from '@/app/reader/hooks/useCapturedTurn';
 import { eventDispatcher } from '@/utils/event';
-import { getMaxInlineSize } from '@/utils/config';
+import { getCurrentRendererLayout, useDuoPose } from '@/hooks/useDuoPose';
 import { nextThemeMode } from '@/utils/ambientLight';
 import { saveViewSettings } from '@/helpers/settings';
-import { tauriHandleToggleFullScreen } from '@/utils/window';
+import { canToggleFullScreen, toggleFullScreen } from '@/utils/window';
 import { setCoverSpread } from '@/utils/spread';
 import MenuItem from '@/components/MenuItem';
 import Menu from '@/components/Menu';
@@ -67,7 +69,7 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
   const viewSettings = getViewSettings(bookKey)!;
   const viewState = getViewState(bookKey);
 
-  const { themeMode, isDarkMode, setThemeMode } = useThemeStore();
+  const { themeMode, setThemeMode } = useThemeStore();
   const [isScrolledMode, setScrolledMode] = useState(viewSettings!.scrolled);
   const [scrolledDirection, setScrolledDirection] = useState(
     viewSettings!.scrolledDirection ?? 'vertical',
@@ -83,10 +85,20 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
   const [contrast, setContrast] = useState(viewSettings!.contrast ?? 100);
   const [zoomMode, setZoomMode] = useState(viewSettings!.zoomMode!);
   const [spreadMode, setSpreadMode] = useState(viewSettings!.spreadMode!);
-  const [keepCoverSpread, setKeepCoverSpread] = useState(viewSettings!.keepCoverSpread!);
-  const [invertImgColorInDark, setInvertImgColorInDark] = useState(
-    viewSettings!.invertImgColorInDark,
+  // On iPhone Duo's inner display in landscape, book mode decides the spread.
+  const duoOwnsSpread = useDuoPose() === 'inner-landscape';
+  const duoBookMode = useReaderStore(
+    (s) => s.viewStates[bookKey]?.viewSettings?.duoBookMode ?? true,
   );
+  const shownSpreadMode = duoOwnsSpread ? (duoBookMode ? 'auto' : 'none') : spreadMode;
+  const chooseSpreadMode = (mode: 'auto' | 'none') => {
+    if (duoOwnsSpread) {
+      saveViewSettings(envConfig, bookKey, 'duoBookMode', mode === 'auto', false, false);
+    } else {
+      setSpreadMode(mode);
+    }
+  };
+  const [keepCoverSpread, setKeepCoverSpread] = useState(viewSettings!.keepCoverSpread!);
   const [applyThemeToPDF, setApplyThemeToPDF] = useState(viewSettings!.applyThemeToPDF!);
   const [rtlSpread, setRtlSpread] = useState(bookData?.bookDoc?.dir === 'rtl');
 
@@ -107,6 +119,16 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
     setIsDropdownOpen?.(false);
   };
 
+  const openReadingStats = () => {
+    setIsDropdownOpen?.(false);
+    setReadingStatsDialogVisible(true);
+  };
+
+  const openVocabulary = () => {
+    setIsDropdownOpen?.(false);
+    setVocabularyDialogVisible(true);
+  };
+
   const openSettingsDialog = () => {
     setIsDropdownOpen?.(false);
     setSettingsDialogBookKey(bookKey);
@@ -118,7 +140,7 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
   };
 
   const handleFullScreen = () => {
-    tauriHandleToggleFullScreen();
+    toggleFullScreen(appService);
     setIsDropdownOpen?.(false);
   };
 
@@ -132,7 +154,7 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
     config?.lastPushedAtNotes || 0,
   );
   // Every provider the user actually selected, not just Readest Cloud (#5910).
-  const syncStatus = useCloudSyncStatus(nativeLastSyncTime);
+  const syncStatus = useCloudSyncStatus(nativeLastSyncTime, bookKey);
 
   const handleSync = () => {
     // Only Readest Cloud needs an account. With a third-party backend
@@ -149,9 +171,15 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
     // did nothing at all.
     eventDispatcher.dispatch('sync-book-progress', { bookKey });
     eventDispatcher.dispatch('flush-notion-sync', { bookKey });
+    eventDispatcher.dispatch('flush-obsidian-sync', { bookKey });
     eventDispatcher.dispatch('push-file-sync', { bookKey });
     eventDispatcher.dispatch('pull-file-sync', { bookKey });
     eventDispatcher.dispatch('flush-kosync', { bookKey });
+    // A tap is a manual sync, so Hardcover pushes even with its Auto Sync off.
+    if (syncStatus.providers.some((p) => p.kind === 'hardcover')) {
+      eventDispatcher.dispatch('hardcover-push-progress', { bookKey, silent: true });
+      eventDispatcher.dispatch('hardcover-push-notes', { bookKey, silent: true });
+    }
     // BookOrbit may be in manual mode (#6029), where nothing is ever pending
     // and the flush above does nothing, so ask it for a real push.
     eventDispatcher.dispatch('push-kosync', { bookKey, provider: 'bookorbit' });
@@ -193,7 +221,7 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
     getView(bookKey)?.renderer.setAttribute('flow', isScrolledMode ? 'scrolled' : 'paginated');
     getView(bookKey)?.renderer.setAttribute(
       'max-inline-size',
-      `${getMaxInlineSize(viewSettings)}px`,
+      `${getCurrentRendererLayout(viewSettings!).maxInlineSize}px`,
     );
     getView(bookKey)?.renderer.setStyles?.(getStyles(viewSettings!));
     // `scrolled` decides which engine owns a swipe: leaving it stale keeps the
@@ -212,12 +240,13 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
     viewSettings.webtoonMode = webtoonMode;
     getView(bookKey)?.renderer.setAttribute('scroll-gap', getScrollGapAttr(webtoonMode));
     if (webtoonMode) {
-      // Webtoon Mode implies scrolled flow + fit-width (scale-factor 100) so pages
-      // fill the width without horizontal overflow/clipping. Reuse the existing
-      // scrolled / zoomLevel effects rather than duplicating their renderer wiring.
-      if (!isScrolledMode) setScrolledMode(true);
+      // Keep an existing scroll direction so horizontal manga can be gapless too.
+      // Entering from paginated reading still defaults to a vertical webtoon strip.
+      if (!isScrolledMode) {
+        setScrolledMode(true);
+        setScrolledDirection('vertical');
+      }
       if (zoomLevel !== 100) setZoomLevel(100);
-      if (scrolledDirection !== 'vertical') setScrolledDirection('vertical');
       saveViewSettings(envConfig, bookKey, 'scrolled', true, false, false);
     }
     setViewSettings(bookKey, viewSettings);
@@ -250,12 +279,6 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
   }, [contrast]);
 
   useEffect(() => {
-    if (invertImgColorInDark === viewSettings.invertImgColorInDark) return;
-    saveViewSettings(envConfig, bookKey, 'invertImgColorInDark', invertImgColorInDark, true, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invertImgColorInDark]);
-
-  useEffect(() => {
     if (applyThemeToPDF === viewSettings.applyThemeToPDF) return;
     saveViewSettings(envConfig, bookKey, 'applyThemeToPDF', applyThemeToPDF, true, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -284,7 +307,8 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
     if (!bookData?.bookDoc?.sections?.length) return;
     viewSettings.keepCoverSpread = keepCoverSpread;
     setCoverSpread(bookData.bookDoc, keepCoverSpread);
-    getView(bookKey)?.renderer.setAttribute('spread', spreadMode);
+    // The spread in effect, which book mode decides on iPhone Duo.
+    getView(bookKey)?.renderer.setAttribute('spread', shownSpreadMode);
     setViewSettings(bookKey, viewSettings);
     saveViewSettings(envConfig, bookKey, 'keepCoverSpread', keepCoverSpread, true, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -396,12 +420,12 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
               <button
                 title={_('Single Page')}
                 onClick={() => {
-                  setSpreadMode('none');
+                  chooseSpreadMode('none');
                   if (isScrolledMode) setScrolledMode(false);
                 }}
                 className={clsx(
                   'hover:bg-base-300 text-base-content rounded-full p-2',
-                  !isScrolledMode && spreadMode === 'none' && 'bg-base-300/75',
+                  !isScrolledMode && shownSpreadMode === 'none' && 'bg-base-300/75',
                 )}
               >
                 <TbColumns1 />
@@ -409,12 +433,12 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
               <button
                 title={_('Auto Spread')}
                 onClick={() => {
-                  setSpreadMode('auto');
+                  chooseSpreadMode('auto');
                   if (isScrolledMode) setScrolledMode(false);
                 }}
                 className={clsx(
                   'hover:bg-base-300 text-base-content rounded-full p-2',
-                  !isScrolledMode && spreadMode === 'auto' && 'bg-base-300/75',
+                  !isScrolledMode && shownSpreadMode === 'auto' && 'bg-base-300/75',
                 )}
               >
                 <TbColumns2 />
@@ -435,7 +459,6 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
               <button
                 title={_('Horizontal Scrolling')}
                 onClick={() => {
-                  if (webtoonMode) setWebtoonMode(false);
                   setScrolledDirection('horizontal');
                   if (!isScrolledMode) setScrolledMode(true);
                 }}
@@ -473,14 +496,13 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
               label={_('Separate Cover Page')}
               Icon={keepCoverSpread ? MdCheck : undefined}
               onClick={() => setKeepCoverSpread(!keepCoverSpread)}
-              disabled={spreadMode === 'none'}
+              disabled={isScrolledMode || shownSpreadMode === 'none'}
             />
             <MenuItem
               label={_('Right-to-Left Pages')}
               Icon={rtlSpread ? MdCheck : undefined}
               onClick={() => setRtlSpread(!rtlSpread)}
             />
-            <MenuItem label={_('Webtoon Mode')} toggled={webtoonMode} onClick={toggleWebtoonMode} />
             <MenuItem
               label={_('Lock Horizontal Panning')}
               toggled={lockHorizontalPan}
@@ -511,22 +533,29 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
         disabled={!isScrolledMode}
       />
 
+      {bookData.book?.format === 'PDF' && appService?.supportsCanvasContext2DFilter && (
+        <MenuItem
+          label={_('Apply Theme Colors')}
+          Icon={applyThemeToPDF ? MdCheck : undefined}
+          onClick={() => setApplyThemeToPDF(!applyThemeToPDF)}
+        />
+      )}
+
       <hr aria-hidden='true' className='border-base-300 my-1' />
 
-      <MenuItem
-        label={_('Paragraph Mode')}
-        shortcut='Shift+P'
-        Icon={isParagraphMode ? MdCheck : undefined}
-        onClick={toggleParagraphMode}
-        disabled={bookData.isFixedLayout}
-      />
-
-      <MenuItem
-        label={_('Speed Reading Mode')}
-        shortcut='Shift+V'
-        onClick={handleStartRSVP}
-        disabled={bookData.isFixedLayout}
-      />
+      {bookData.isFixedLayout ? (
+        <MenuItem label={_('Webtoon Mode')} toggled={webtoonMode} onClick={toggleWebtoonMode} />
+      ) : (
+        <>
+          <MenuItem
+            label={_('Paragraph Mode')}
+            shortcut='Shift+P'
+            Icon={isParagraphMode ? MdCheck : undefined}
+            onClick={toggleParagraphMode}
+          />
+          <MenuItem label={_('Speed Reading Mode')} shortcut='Shift+V' onClick={handleStartRSVP} />
+        </>
+      )}
 
       <hr aria-hidden='true' className='border-base-300 my-1' />
 
@@ -567,7 +596,9 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
 
       <hr aria-hidden='true' className='border-base-300 my-1' />
 
-      {appService?.hasWindow && <MenuItem label={_('Fullscreen')} onClick={handleFullScreen} />}
+      {canToggleFullScreen(appService) && (
+        <MenuItem label={_('Fullscreen')} onClick={handleFullScreen} />
+      )}
       <MenuItem
         label={
           themeMode === 'dark'
@@ -589,21 +620,9 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
         }
         onClick={cycleThemeMode}
       />
+      <MenuItem label={_('Reading Statistics')} Icon={PiChartBar} onClick={openReadingStats} />
+      <MenuItem label={_('Vocabulary')} Icon={PiCardsThree} onClick={openVocabulary} />
       <MenuItem label={_('Settings')} Icon={PiGear} onClick={openSettingsDialog} />
-      {bookData.book?.format === 'PDF' && appService?.supportsCanvasContext2DFilter && (
-        <MenuItem
-          label={_('Apply Theme Colors to PDF')}
-          Icon={applyThemeToPDF ? MdCheck : undefined}
-          onClick={() => setApplyThemeToPDF(!applyThemeToPDF)}
-        />
-      )}
-      <MenuItem
-        label={_('Invert Image In Dark Mode')}
-        disabled={!isDarkMode}
-        Icon={invertImgColorInDark ? MdCheck : undefined}
-        onClick={() => setInvertImgColorInDark(!invertImgColorInDark)}
-      />
-
       <hr aria-hidden='true' className='border-base-300 my-1' />
 
       <MenuItem label={_('Share Book')} Icon={IoShareOutline} onClick={handleShare} />

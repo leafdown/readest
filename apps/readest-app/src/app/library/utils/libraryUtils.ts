@@ -7,10 +7,12 @@ import {
 import {
   formatAuthors,
   formatTitle,
+  getBookPageCount,
   getContributorNames,
   isCurrentlyReadingBook,
 } from '@/utils/book';
 import { md5Fingerprint } from '@/utils/md5';
+import type { TranslationFunc } from '@/hooks/useTranslation';
 import { stubTranslation as _ } from '@/utils/misc';
 import { SIZE_PER_LOC, SIZE_PER_TIME_UNIT } from '@/services/constants';
 import { isFeedBook } from '@/services/rss/feedBookUrl';
@@ -175,6 +177,32 @@ export const expandBookshelfSelection = (ids: string[], items: (Book | BooksGrou
 };
 
 /**
+ * The manual group a selection stands for, if any. Selecting a group tile
+ * selects its books (nested folders included), never the group's id, so the
+ * group is the rendered folder tile whose books are exactly the selection.
+ * Folder tiles are keyed by `md5Fingerprint(name)`; series/author/tag tiles
+ * namespace their keys, so they never match.
+ */
+export const findSelectedManualGroup = (
+  ids: string[],
+  items: (Book | BooksGroup)[],
+): BooksGroup | undefined => {
+  const selected = new Set(ids);
+  return items.find((item): item is BooksGroup => {
+    if (!('books' in item) || item.id !== md5Fingerprint(item.name)) return false;
+    const books = item.books.filter((book) => !book.deletedAt);
+    return (
+      books.length === selected.size &&
+      books.every(
+        (book) =>
+          selected.has(book.hash) &&
+          (book.groupName === item.name || !!book.groupName?.startsWith(`${item.name}/`)),
+      )
+    );
+  });
+};
+
+/**
  * The books a bulk Download should actually fetch (#5244): the selection
  * expanded through {@link expandBookshelfSelection}, narrowed to the books that
  * live in the cloud but not on this device. The predicate matches the per-book
@@ -196,6 +224,35 @@ export const selectDownloadableBooks = (
       !book.downloadedAt,
   );
 };
+
+/**
+ * The Audiobookshelf audiobooks a bulk Download should keep on the device
+ * (#6256): the expanded selection narrowed to the books the per-book
+ * "Download for Offline" action applies to and that aren't offline yet.
+ */
+export const selectAbsOfflineBooks = (
+  ids: string[],
+  items: (Book | BooksGroup)[],
+  books: Book[],
+): Book[] => {
+  const hashes = new Set(expandBookshelfSelection(ids, items));
+  return books.filter(
+    (book) =>
+      hashes.has(book.hash) &&
+      !book.deletedAt &&
+      isAbsOfflineCapable(book) &&
+      !book.absDownloadedAt,
+  );
+};
+
+/**
+ * Whether a bulk "Remove from Device Only" may drop this book's local file
+ * (#7318): only when the book stays somewhere else — the cloud, or the
+ * Audiobookshelf server for an offline ABS download — so the library keeps a
+ * copy to download again.
+ */
+export const canRemoveFromDeviceOnly = (book: Book): boolean =>
+  (!!book.downloadedAt && !!book.uploadedAt) || !!book.absDownloadedAt;
 
 // Calibre custom column names and values, flattened for searching (#4811).
 const getCalibreColumnsText = (item: Book) =>
@@ -299,6 +356,15 @@ const getBookReadRatio = (book: Book): number => {
   return current / total;
 };
 
+/** Percent read, or `null` when there's no progress to show. A total of 1
+ * (e.g. a fixed-layout book with one page) reads as finished (100%). */
+export const getProgressPercentage = (book: Book): number | null => {
+  if (!book.progress || !book.progress[1]) return null;
+  if (book.progress[1] === 1) return 100;
+  const percentage = Math.round((book.progress[0] / book.progress[1]) * 100);
+  return Math.max(0, Math.min(100, percentage));
+};
+
 export const getTimeRemainingMinutes = (
   book: Book,
   medianPageDurationSecs?: number,
@@ -346,6 +412,19 @@ export const getDisplayedTimeRemaining = (
   return getTimeRemainingMinutes(book, medianPageDurationSecs);
 };
 
+// A tenth of an hour is still meaningful below 10h (1.6h); above it, a tenth
+// stops mattering once there are dozens of hours left.
+const roundedHours = (totalMinutes: number): number => {
+  const hours = totalMinutes / 60;
+  return hours < 10 ? Math.round(hours * 10) / 10 : Math.round(hours);
+};
+
+/** The library tile's short form: "45m left" under an hour, "1.6h left" / "11h left" above it. */
+export const formatTimeLeft = (totalMinutes: number, _: TranslationFunc): string =>
+  totalMinutes < 60
+    ? _('{{minutes}}m left', { minutes: totalMinutes })
+    : _('{{hours}}h left', { hours: roundedHours(totalMinutes) });
+
 /**
  * Remaining minutes for a shelf item, or `undefined` when its tile can show no
  * time at all — that includes every group, since a group tile renders no progress.
@@ -371,6 +450,22 @@ export const withTimeRemainingLast =
     return compare(a, b);
   };
 
+// localeCompare with an options object builds a new collator on every call, which
+// is ~20x slower in V8, so title sorts reuse one numeric collator per locale.
+const numericCollators = new Map<string, Intl.Collator>();
+const compareTitles = (a: string, b: string, uiLanguage: string): number => {
+  const locale = uiLanguage || navigator.language;
+  let collator = numericCollators.get(locale);
+  if (!collator) {
+    collator = new Intl.Collator(locale, { numeric: true });
+    numericCollators.set(locale, collator);
+  }
+  return collator.compare(a, b);
+};
+
+const getTitleSortValue = (book: Book): string =>
+  formatTitle(book.title).replace(/^\s*(?:a|an|the)\s+(?=\S)/i, '');
+
 const compareBookByKey = (
   a: Book,
   b: Book,
@@ -380,9 +475,9 @@ const compareBookByKey = (
 ): number => {
   switch (sortBy) {
     case LibrarySortByType.Title: {
-      const aTitle = formatTitle(a.title);
-      const bTitle = formatTitle(b.title);
-      return aTitle.localeCompare(bTitle, uiLanguage || navigator.language);
+      const aTitle = getTitleSortValue(a);
+      const bTitle = getTitleSortValue(b);
+      return compareTitles(aTitle, bTitle, uiLanguage);
     }
     case LibrarySortByType.Author: {
       const aAuthors = formatAuthors(a.author, a?.primaryLanguage || 'en', true);
@@ -397,6 +492,8 @@ const compareBookByKey = (
       return a.format.localeCompare(b.format, uiLanguage || navigator.language);
     case LibrarySortByType.Progress:
       return getBookReadRatio(a) - getBookReadRatio(b);
+    case LibrarySortByType.Pages:
+      return (getBookPageCount(a) ?? 0) - (getBookPageCount(b) ?? 0);
     case LibrarySortByType.Series: {
       // Group by series name first so books of the same series stay consecutive,
       // then order within a series by index. Comparing index alone would interleave
@@ -803,7 +900,7 @@ export const createWithinGroupSorter =
 export const getBookSortValue = (book: Book, sortBy: LibrarySortByType): number | string => {
   switch (sortBy) {
     case LibrarySortByType.Title:
-      return formatTitle(book.title);
+      return getTitleSortValue(book);
 
     case LibrarySortByType.Author:
       return formatAuthors(book.author, book?.primaryLanguage || 'en', true);
@@ -819,6 +916,9 @@ export const getBookSortValue = (book: Book, sortBy: LibrarySortByType): number 
 
     case LibrarySortByType.Progress:
       return getBookReadRatio(book);
+
+    case LibrarySortByType.Pages:
+      return getBookPageCount(book) ?? 0;
 
     case LibrarySortByType.Published: {
       const published = book.metadata?.published;
@@ -849,13 +949,16 @@ export const getGroupSortValue = (
   groupBy?: LibraryGroupByType,
 ): number | string => {
   const books = group.books;
+  // A subgroup's name is its full path ("Languages/Chinese"); it sorts among
+  // the parent group's books by its own name, as it is shown (#7062).
+  const name = groupBy === LibraryGroupByType.Group ? group.displayName : group.name;
 
   if (books.length === 0) {
     return sortBy === LibrarySortByType.Title ||
       sortBy === LibrarySortByType.Series ||
       sortBy === LibrarySortByType.Author ||
       sortBy === LibrarySortByType.Format
-      ? group.name
+      ? name
       : 0;
   }
 
@@ -863,7 +966,7 @@ export const getGroupSortValue = (
     case LibrarySortByType.Title:
     case LibrarySortByType.Series:
     case LibrarySortByType.Format:
-      return group.name;
+      return name;
 
     case LibrarySortByType.Author: {
       if (groupBy === LibraryGroupByType.Author) {
@@ -876,7 +979,7 @@ export const getGroupSortValue = (
         return formatAuthors(firstBook.author, firstBook.primaryLanguage || 'en', true);
       }
       // Custom/other groups: fall back to group name
-      return group.name;
+      return name;
     }
 
     case LibrarySortByType.Updated:
@@ -890,6 +993,10 @@ export const getGroupSortValue = (
     case LibrarySortByType.Progress:
       // Return the most-progressed book's read ratio
       return Math.max(...books.map((b) => getBookReadRatio(b)));
+
+    case LibrarySortByType.Pages:
+      // Return the group's total page count
+      return books.reduce((sum, b) => sum + (getBookPageCount(b) ?? 0), 0);
 
     case LibrarySortByType.Published: {
       // Return the most recent published date
@@ -922,10 +1029,13 @@ export const compareSortValues = (
   aValue: number | string,
   bValue: number | string,
   uiLanguage: string,
+  sortBy?: LibrarySortByType,
 ): number => {
   // String comparison for text-based sorts
   if (typeof aValue === 'string' && typeof bValue === 'string') {
-    return aValue.localeCompare(bValue, uiLanguage || navigator.language);
+    return sortBy === LibrarySortByType.Title
+      ? compareTitles(aValue, bValue, uiLanguage)
+      : aValue.localeCompare(bValue, uiLanguage || navigator.language);
   }
 
   // Numeric comparison for date-based sorts
@@ -945,17 +1055,7 @@ export const createGroupSorter =
     const aValue = getGroupSortValue(a, sortBy, groupBy);
     const bValue = getGroupSortValue(b, sortBy, groupBy);
 
-    // String comparison for text-based sorts
-    if (typeof aValue === 'string' && typeof bValue === 'string') {
-      return aValue.localeCompare(bValue, uiLanguage || navigator.language);
-    }
-
-    // Numeric comparison for date-based sorts
-    if (typeof aValue === 'number' && typeof bValue === 'number') {
-      return aValue - bValue;
-    }
-
-    return 0;
+    return compareSortValues(aValue, bValue, uiLanguage, sortBy);
   };
 
 export type BookContextMenuItemId =
@@ -1125,4 +1225,10 @@ export const getBookContextMenuItemIds = (
   }
   ids.push('delete');
   return ids;
+};
+
+/** The group every book shares, or undefined when they don't share one. */
+export const getCommonGroupName = (books: Book[]): string | undefined => {
+  const name = books[0]?.groupName;
+  return name && books.every((book) => book.groupName === name) ? name : undefined;
 };

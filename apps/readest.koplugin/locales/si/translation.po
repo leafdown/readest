@@ -185,6 +185,12 @@ msgstr "මෙම පොත වළාකුළු සහ උපාංගයෙ�
 msgid "Remove"
 msgstr "ඉවත් කරන්න"
 
+msgid "Remove from Library, Keep File"
+msgstr "පුස්තකාලයෙන් ඉවත් කරන්න, ගොනුව තබා ගන්න"
+
+msgid "Remove this book from your library and the cloud? The file stays on this device."
+msgstr "මෙම පොත ඔබේ පුස්තකාලයෙන් සහ වලාකුළෙන් ඉවත් කරන්නද? ගොනුව මෙම උපාංගයේ පවතී."
+
 msgid "Remove from Cloud Only"
 msgstr "වළාකුළුවෙන් පමණක් ඉවත් කරන්න"
 
@@ -287,14 +293,14 @@ msgstr "පොතක් විවෘතව නැත"
 msgid "Uploaded to Readest:"
 msgstr "Readest වෙත උඩුගත කරන ලදී:"
 
+msgid "Auto sync"
+msgstr "ස්වයංක්‍රීය සමමුහූර්ත"
+
 msgid "Log in Readest Account"
 msgstr "Readest ගිණුමට පිවිසෙන්න"
 
 msgid "Log out as %1"
 msgstr "%1 ලෙස ඉවත් වන්න"
-
-msgid "Auto sync"
-msgstr "ස්වයංක්‍රීය සමමුහූර්ත"
 
 msgid "Readest library"
 msgstr "Readest පුස්තකාලය"
@@ -337,9 +343,6 @@ msgstr "යාවත්කාලීන කිරීම පරීක්ෂා ක
 
 msgid "Please login first"
 msgstr "කරුණාකර මුලින්ම පිවිසෙන්න"
-
-msgid "Please configure Readest settings first"
-msgstr "කරුණාකර මුලින්ම Readest සැකසුම් වින්‍යාස කරන්න"
 
 msgid "(none)"
 msgstr "(කිසිවක් නැත)"
@@ -506,9 +509,6 @@ msgstr "සම්පූර්ණ සමමුහූර්තකරණය: සි
 msgid "Pulling annotations..."
 msgstr "සටහන් ලබාගනිමින්…"
 
-msgid "Authentication failed, please login again"
-msgstr "සත්‍යාපනය අසාර්ථකයි, කරුණාකර නැවත පිවිසෙන්න"
-
 msgid "Failed to pull annotations"
 msgstr "සටහන් ලබාගැනීම අසාර්ථකයි"
 
@@ -521,11 +521,17 @@ msgstr "%1 සටහන් ලබා ගන්නා ලදී"
 msgid "Your Readest session has expired. Please log in again."
 msgstr "ඔබගේ Readest සැසිය කල් ඉකුත් වී ඇත. කරුණාකර නැවත පිවිසෙන්න."
 
+msgid "Authentication failed, please login again"
+msgstr "සත්‍යාපනය අසාර්ථකයි, කරුණාකර නැවත පිවිසෙන්න"
+
 msgid "Login"
 msgstr "පිවිසෙන්න"
 
 msgid "Please enter both email and password"
 msgstr "කරුණාකර ඊමේල් සහ මුරපදය දෙකම ඇතුළත් කරන්න"
+
+msgid "Sign in with a code"
+msgstr "කේතයකින් පුරනය වන්න"
 
 msgid "Please configure Supabase URL and API key first"
 msgstr "කරුණාකර මුලින්ම Supabase URL සහ API යතුර වින්‍යාස කරන්න"
@@ -533,11 +539,17 @@ msgstr "කරුණාකර මුලින්ම Supabase URL සහ API ය�
 msgid "Logging in..."
 msgstr "පිවිසෙමින්…"
 
+msgid "Login failed: %1"
+msgstr "පිවිසීම අසාර්ථකයි: %1"
+
 msgid "Successfully logged in to Readest"
 msgstr "Readest වෙත සාර්ථකව පිවිසුණි"
 
-msgid "Login failed: %1"
-msgstr "පිවිසීම අසාර්ථකයි: %1"
+msgid "Scan the QR code with a phone signed in to Readest, or open %1 and enter this code:\n\n%2"
+msgstr "Readest වෙත පුරනය වූ දුරකථනයකින් QR කේතය ස්කෑන් කරන්න, නැතහොත් %1 විවෘත කර මෙම කේතය ඇතුළත් කරන්න:\n\n%2"
+
+msgid "The code expired. Please try again."
+msgstr "කේතය කල් ඉකුත් විය. කරුණාකර නැවත උත්සාහ කරන්න."
 
 msgid "Logged out from Readest"
 msgstr "Readest වෙතින් ඉවත් විය"
@@ -566,8 +578,65 @@ msgstr "කියවීමේ ප්‍රගතිය ලබාගැනීම 
 msgid "Reading progress synchronized"
 msgstr "කියවීමේ ප්‍රගතිය සමමුහූර්ත විය"
 
+msgid "Saved reading position cannot be used with this copy of the book"
+msgstr "සුරැකි කියවීමේ ස්ථානය මෙම පොතේ පිටපත සමඟ භාවිත කළ නොහැක"
+
 msgid "No saved reading progress found for this book"
 msgstr "මෙම පොත සඳහා සුරකින ලද කියවීමේ ප්‍රගතියක් හමු නොවුණි"
+
+msgid "Sync was cancelled."
+msgstr "සමමුහුර්තකරණය අවලංගු කරන ලදී."
+
+msgid "The connection timed out. Please try again."
+msgstr "සම්බන්ධතාවයේ කාලය ඉක්මවිය. නැවත උත්සාහ කරන්න."
+
+msgid "The network is unreachable. Please check the internet connection."
+msgstr "ජාලයට ළඟා විය නොහැක. අන්තර්ජාල සම්බන්ධතාවය පරීක්ෂා කරන්න."
+
+msgid "The server could not be found. Please check the internet connection."
+msgstr "සේවාදායකය සොයාගත නොහැක. අන්තර්ජාල සම්බන්ධතාවය පරීක්ෂා කරන්න."
+
+msgid "The server refused the connection. Please try again later."
+msgstr "සේවාදායකය සම්බන්ධතාවය ප්‍රතික්ෂේප කළේය. පසුව නැවත උත්සාහ කරන්න."
+
+msgid "The connection was interrupted. Please try again."
+msgstr "සම්බන්ධතාවය බාධා විය. නැවත උත්සාහ කරන්න."
+
+msgid "A secure connection to the server could not be established."
+msgstr "සේවාදායකය සමඟ ආරක්ෂිත සම්බන්ධතාවයක් ඇති කළ නොහැකි විය."
+
+msgid "Authentication failed. Please log in again."
+msgstr "සත්‍යාපනය අසාර්ථක විය. නැවත පිවිසෙන්න."
+
+msgid "The account changed during sync."
+msgstr "සමමුහුර්තකරණය අතරතුර ගිණුම වෙනස් විය."
+
+msgid "The file was not found in the cloud."
+msgstr "වලාකුළේ ගොනුව සොයාගත නොහැක."
+
+msgid "The local file is missing."
+msgstr "දේශීය ගොනුව නොමැත."
+
+msgid "An internal error occurred. Please try again."
+msgstr "අභ්‍යන්තර දෝෂයක් ඇති විය. නැවත උත්සාහ කරන්න."
+
+msgid "Access denied."
+msgstr "ප්‍රවේශය ප්‍රතික්ෂේප විය."
+
+msgid "Not found on the server."
+msgstr "සේවාදායකයේ සොයාගත නොහැක."
+
+msgid "The file is too large."
+msgstr "ගොනුව ඉතා විශාලය."
+
+msgid "Too many requests. Please try again later."
+msgstr "ඉල්ලීම් වැඩිය. පසුව නැවත උත්සාහ කරන්න."
+
+msgid "The server is temporarily unavailable. Please try again later."
+msgstr "සේවාදායකය තාවකාලිකව නොමැත. පසුව නැවත උත්සාහ කරන්න."
+
+msgid "The request failed. Please try again."
+msgstr "ඉල්ලීම අසාර්ථක විය. නැවත උත්සාහ කරන්න."
 
 msgid "Reading statistics are up to date"
 msgstr "කියවීමේ සංඛ්‍යාලේඛන යාවත්කාලීනයි"
